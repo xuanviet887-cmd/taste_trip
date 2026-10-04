@@ -1,1 +1,107 @@
 @import "tailwindcss";
+
+@layer base {
+  :root {
+    --gold: #D4B872;
+    --gold-hover: #C2A55F;
+    --lacquer: #8B0000;
+    --lacquer-light: #A52A2A;
+    --dzo: #FAF6EE;
+    --bamboo: #1E5631;
+    --bamboo-light: #2E8B57;
+  }
+}
+
+/* Font Families */
+.font-serif-playfair { font-family: 'Playfair Display', serif; }
+.font-serif-lora { font-family: 'Lora', serif; }
+.font-serif-merriweather { font-family: 'Merriweather', serif; }
+.font-sans-montserrat { font-family: 'Montserrat', sans-serif; }
+.font-sans-oswald { font-family: 'Oswald', sans-serif; }
+.font-sans-poppins { font-family: 'Poppins', sans-serif; }
+.font-script-dancing { font-family: 'Dancing Script', cursive; }
+.font-sans-inter { font-family: 'Inter', sans-serif; }
+
+/* --- WIX VIEW TRANSITIONS API --- */
+@view-transition {
+  navigation: auto;
+}
+
+::view-transition-old(root) {
+  animation: 0.35s cubic-bezier(0.22, 1, 0.36, 1) forwards fade-out;
+}
+
+::view-transition-new(root) {
+  animation: 0.35s cubic-bezier(0.64, 0, 0.78, 0) 0.35s backwards fade-in;
+}
+
+@keyframes fade-out {
+  to { opacity: 0; transform: translateY(-8px); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
+/* Keyframes */
+@keyframes motion-fadeIn {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+@keyframes motion-floatIn {
+  0% { opacity: 0; transform: translateY(40px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes motion-flip-1 {
+  0% { transform: perspective(800px) rotate3d(0, 1, 0, 0deg); }
+  100% { transform: perspective(800px) rotate3d(0, 1, 0, 360deg); }
+}
+
+.animate-motion-fadeIn { animation: motion-fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.animate-motion-floatIn { animation: motion-floatIn 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.animate-motion-flip { animation: motion-flip-1 3s infinite linear; }
+
+/* Interactive & Visual Effects */
+.hover-box-blend {
+  mix-blend-mode: plus-lighter;
+  transition: opacity 0.5s ease;
+}
+
+.focus-ring-accessible:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 1px 1px #3899ec, inset 0 0 0 2px hsla(0,0%,100%,.9), 0 0 0 4px rgba(56, 153, 236, 0.4);
+}
+
+/* Text Marquee */
+@keyframes marquee {
+  0% { transform: translateX(0%); }
+  100% { transform: translateX(-50%); }
+}
+.animate-marquee {
+  display: flex;
+  width: 200%;
+  animation: marquee 25s linear infinite;
+}
+
+/* Bamboo Background Watermark (Lũy tre Việt Nam) */
+.bg-bamboo-watermark {
+  background-color: #FAF6EE;
+  background-image: linear-gradient(rgba(250, 246, 238, 0.92), rgba(250, 246, 238, 0.92)), url('/picture/f2f0278b13a0c88a014a26e41edc504d.jpg');
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: #FAF6EE; }
+::-webkit-scrollbar-thumb { background: #D4B872; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #C2A55F; }

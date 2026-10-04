@@ -6,6 +6,8 @@ export interface Restaurant {
   priceLevel: string;
   priceRange: string;
   distanceKm: number;
+  lat: number;
+  lng: number;
   rating: number;
   reviewsCount: number;
   address: string;
@@ -29,6 +31,8 @@ export const MOCK_RESTAURANTS: Restaurant[] = [
     priceLevel: '50k - 100k',
     priceRange: '50.000 - 100.000đ',
     distanceKm: 0.35,
+    lat: 21.0285,
+    lng: 105.8525,
     rating: 4.6,
     reviewsCount: 1200,
     address: '61 Đinh Tiên Hoàng, Hoàn Kiếm, Hà Nội',
@@ -54,6 +58,8 @@ export const MOCK_RESTAURANTS: Restaurant[] = [
     priceLevel: '100k - 200k',
     priceRange: '100.000 - 200.000đ',
     distanceKm: 0.7,
+    lat: 21.0145,
+    lng: 105.8495,
     rating: 4.4,
     reviewsCount: 980,
     address: '24 Lê Văn Hưu, Hai Bà Trưng, Hà Nội',
@@ -75,6 +81,8 @@ export const MOCK_RESTAURANTS: Restaurant[] = [
     priceLevel: 'Dưới 50k',
     priceRange: '20.000 - 50.000đ',
     distanceKm: 0.85,
+    lat: 21.0255,
+    lng: 105.8545,
     rating: 4.3,
     reviewsCount: 760,
     address: '35 Tràng Tiền, Hoàn Kiếm, Hà Nội',
