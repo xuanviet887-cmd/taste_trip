@@ -91,10 +91,10 @@
   animation: marquee 25s linear infinite;
 }
 
-/* Bamboo Background Watermark (Lũy tre Việt Nam) */
+/* Custom Background */
 .bg-bamboo-watermark {
-  background-color: #FAF6EE;
-  background-image: linear-gradient(rgba(250, 246, 238, 0.92), rgba(250, 246, 238, 0.92)), url('/picture/f2f0278b13a0c88a014a26e41edc504d.jpg');
+  background-color: #1a2e1a;
+  background-image: linear-gradient(rgba(250, 246, 238, 0.88), rgba(250, 246, 238, 0.88)), url('/picture/f2f0278b13a0c88a014a26e41edc504d.jpg');
   background-size: cover;
   background-position: center;
   background-attachment: fixed;
