@@ -100,6 +100,24 @@ const PROVINCES_DB = {
     { time: '12:00', mealType: 'Trưa', name: 'Bánh đa cua', address: 'Ngô Quyền, Hải Phòng', cultureStory: 'Đặc sản trứ danh với bánh đa đỏ và riêu cua đồng.', tastingTip: 'Ăn kèm chả lá lốt và rau rút.', englishMenu: 'Red Rice Noodle Soup with Crab.' },
     { time: '15:30', mealType: 'Chiều', name: 'Nem cua bể, dừa dầm', address: 'Cầu Đất, Hải Phòng', cultureStory: 'Nem vuông giòn rụm kết hợp chè dừa dầm ngọt mát.', tastingTip: 'Thưởng thức khi nem còn nóng.', englishMenu: 'Square Crab Spring Roll & Coconut Dessert.' },
     { time: '19:00', mealType: 'Tối', name: 'Lẩu cua đồng', address: 'Hồng Bàng, Hải Phòng', cultureStory: 'Nồi lẩu đồng quê ấm cúng.', tastingTip: 'Nhúng rau rút và thịt bò.', englishMenu: 'Freshwater Crab Hotpot.' }
+  ]},
+  'đà nẵng': { title: 'Đà Nẵng - Thành Phố Biển Xanh', region: 'Duyên hải Nam Trung Bộ', stops: [
+    { time: '08:00', mealType: 'Sáng', name: 'Mì Quảng', address: 'Hải Châu, Đà Nẵng', cultureStory: 'Mì Quảng đậm đà hương vị xứ Quảng với nước lèo đậm vị.', tastingTip: 'Trộn đều bánh tráng nướng bóp vụn và rau sống.', englishMenu: 'Quang Style Turmeric Noodles.' },
+    { time: '12:00', mealType: 'Trưa', name: 'Bánh xèo miền Trung', address: 'Thanh Khê, Đà Nẵng', cultureStory: 'Bánh xèo giòn rụm cuốn bánh tráng rau sống.', tastingTip: 'Chấm nước mắm đậu phộng chua ngọt.', englishMenu: 'Crispy Central Vietnamese Pancake.' },
+    { time: '15:30', mealType: 'Chiều', name: 'Gỏi cá Nam Ô', address: 'Liên Chiểu, Đà Nẵng', cultureStory: 'Đặc sản trứ danh làng chài Nam Ô.', tastingTip: 'Cuốn bánh tráng với rau rừng và chấm nước sốt cá đặc trưng.', englishMenu: 'Nam O Raw Fish Salad.' },
+    { time: '19:00', mealType: 'Tối', name: 'Hải sản tươi sống biển Mỹ Khê', address: 'Sơn Trà, Đà Nẵng', cultureStory: 'Hải sản đánh bắt trực tiếp từ vịnh Đà Nẵng.', tastingTip: 'Thưởng thức hấp sả hoặc nướng mọi.', englishMenu: 'Fresh My Khe Beach Seafood.' }
+  ]},
+  'tp.hồ chí minh': { title: 'Sài Gòn - Hòn Ngọc Viễn Đông', region: 'Đông Nam Bộ', stops: [
+    { time: '08:00', mealType: 'Sáng', name: 'Cơm tấm Sài Gòn', address: 'Quận 1, TP. Hồ Chí Minh', cultureStory: 'Hạt cơm tấm thơm ngon ăn kèm sườn nướng mật ong đậm đà.', tastingTip: 'Thêm bì chả và nước mắm kẹo.', englishMenu: 'Saigon Broken Rice with Grilled Pork.' },
+    { time: '12:00', mealType: 'Trưa', name: 'Bánh mì Sài Gòn', address: 'Quận 3, TP. Hồ Chí Minh', cultureStory: 'Ổ bánh mì giòn tan nhân thịt nguội pate thơm phức.', tastingTip: 'Thêm chút ớt tươi để tăng hương vị.', englishMenu: 'Traditional Saigon Baguette.' },
+    { time: '15:30', mealType: 'Chiều', name: 'Bánh tráng trộn / Chè Sài Gòn', address: 'Quận 10, TP. Hồ Chí Minh', cultureStory: 'Món ăn vặt đường phố biểu tượng của giới trẻ.', tastingTip: 'Trộn đều gia vị trước khi ăn.', englishMenu: 'Saigon Mixed Rice Paper & Dessert.' },
+    { time: '19:00', mealType: 'Tối', name: 'Lẩu bò Ba Toa / Hải sản đêm', address: 'Quận 5, TP. Hồ Chí Minh', cultureStory: 'Phố ẩm thực đêm sôi động náo nhiệt.', tastingTip: 'Thưởng thức cùng bạn bè trong không gian ấm cúng.', englishMenu: 'Saigon Night Hotpot.' }
+  ]},
+  'cần thơ': { title: 'Cần Thơ - Gạo Trắng Nước Trong', region: 'Đồng bằng Sông Cửu Long', stops: [
+    { time: '08:00', mealType: 'Sáng', name: 'Bánh xèo miền Tây', address: 'Ninh Kiều, Cần Thơ', cultureStory: 'Bánh xèo khổng lồ nhân củ hủ dừa, tép bạc và thịt heo.', tastingTip: 'Cuốn rau vườn và chấm mắm me chua ngọt.', englishMenu: 'Mekong Delta Giant Pancake.' },
+    { time: '12:00', mealType: 'Trưa', name: 'Lẩu cá kèo miền Tây', address: 'Cái Răng, Cần Thơ', cultureStory: 'Nồi lẩu lá giang chua thanh ăn cùng cá kèo tươi sống.', tastingTip: 'Nhúng rau đắng, bông súng và cù nèo.', englishMenu: 'Mekong Delta River Catfish Hotpot.' },
+    { time: '15:30', mealType: 'Chiều', name: 'Bánh tằm bì', address: 'Ninh Kiều, Cần Thơ', cultureStory: 'Bánh tằm dẻo thơm rưới nước cốt dừa béo ngậy.', tastingTip: 'Ăn kèm bì thính và nước mắm tỏi ớt.', englishMenu: 'Silky Rice Noodles with Shredded Pork.' },
+    { time: '19:00', mealType: 'Tối', name: 'Cá lóc nướng trui', address: 'Bến Ninh Kiều, Cần Thơ', cultureStory: 'Món ăn đồng quê dân dã nướng rơm thơm lừng.', tastingTip: 'Cuốn bánh tráng bún rau sống chấm mắm nêm.', englishMenu: 'Straw-Grilled Snakehead Fish.' }
   ]}
 };
 

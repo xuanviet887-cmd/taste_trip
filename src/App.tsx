@@ -41,13 +41,13 @@ const THEMED_TOURS: ThemeTour[] = [
     id: 'hanoi',
     title: 'Hà Nội Trọn Vẹn',
     desc: 'Sáng: Phở bò | Trưa: Bún chả | Chiều: Bánh giò/Nem chua rán | Tối: Chả cá Lã Vọng.',
-    image: '/picture/provinces/ha-giang.jpg',
+    image: '/picture/provinces/hanoi.jpg',
     region: 'Đồng bằng sông Hồng',
     stops: [
-      { time: '08:00', mealType: 'Sáng', name: 'Phở bò', address: 'Quận Hoàn Kiếm, Hà Nội', image: '/picture/provinces/ha-giang.jpg', price: '50.000đ', priceNum: 50000, category: 'Đặc sản', cultureStory: 'Biểu tượng ẩm thực Thủ đô với nước dùng hầm xương 12 giờ.', tastingTip: 'Ăn kèm quẩy giòn và trứng chần.', englishMenu: 'Traditional Hanoi Beef Noodle Soup.', distance: '0.0 km' },
-      { time: '12:00', mealType: 'Trưa', name: 'Bún chả', address: 'Quận Hoàn Kiếm, Hà Nội', image: '/picture/provinces/ha-giang.jpg', price: '60.000đ', priceNum: 60000, category: 'Đặc sản', cultureStory: 'Chả nướng than hoa thơm lừng đậm đà nét Tràng An.', tastingTip: 'Ăn kèm rau sống tươi và nem rán.', englishMenu: 'Grilled Pork with Rice Vermicelli.', distance: '1.2 km' },
-      { time: '15:30', mealType: 'Chiều', name: 'Bánh giò/Nem chua rán', address: 'Khu Phố Cổ, Hà Nội', image: '/picture/provinces/ha-giang.jpg', price: '40.000đ', priceNum: 40000, category: 'Bình dân', cultureStory: 'Quà chiều quen thuộc phố cổ.', tastingTip: 'Chấm tương ớt cay ngọt.', englishMenu: 'Steamed Rice Dumpling & Crispy Fermented Pork.', distance: '0.8 km' },
-      { time: '19:00', mealType: 'Tối', name: 'Chả cá Lã Vọng', address: '14 Phố Chả Cá, Hoàn Kiếm, Hà Nội', image: '/picture/provinces/ha-giang.jpg', price: '150.000đ', priceNum: 150000, category: 'Sang trọng', cultureStory: 'Món ăn danh tiếng hơn 150 năm.', tastingTip: 'Ăn kèm bún, mắm tôm và thì là.', englishMenu: 'Turmeric Grilled Fish with Dill.', distance: '1.5 km' }
+      { time: '08:00', mealType: 'Sáng', name: 'Phở bò', address: 'Quận Hoàn Kiếm, Hà Nội', image: '/picture/provinces/hanoi.jpg', price: '50.000đ', priceNum: 50000, category: 'Đặc sản', cultureStory: 'Biểu tượng ẩm thực Thủ đô với nước dùng hầm xương 12 giờ.', tastingTip: 'Ăn kèm quẩy giòn và trứng chần.', englishMenu: 'Traditional Hanoi Beef Noodle Soup.', distance: '0.0 km' },
+      { time: '12:00', mealType: 'Trưa', name: 'Bún chả', address: 'Quận Hoàn Kiếm, Hà Nội', image: '/picture/provinces/hanoi.jpg', price: '60.000đ', priceNum: 60000, category: 'Đặc sản', cultureStory: 'Chả nướng than hoa thơm lừng đậm đà nét Tràng An.', tastingTip: 'Ăn kèm rau sống tươi và nem rán.', englishMenu: 'Grilled Pork with Rice Vermicelli.', distance: '1.2 km' },
+      { time: '15:30', mealType: 'Chiều', name: 'Bánh giò/Nem chua rán', address: 'Khu Phố Cổ, Hà Nội', image: '/picture/provinces/hanoi.jpg', price: '40.000đ', priceNum: 40000, category: 'Bình dân', cultureStory: 'Quà chiều quen thuộc phố cổ.', tastingTip: 'Chấm tương ớt cay ngọt.', englishMenu: 'Steamed Rice Dumpling & Crispy Fermented Pork.', distance: '0.8 km' },
+      { time: '19:00', mealType: 'Tối', name: 'Chả cá Lã Vọng', address: '14 Phố Chả Cá, Hoàn Kiếm, Hà Nội', image: '/picture/provinces/hanoi.jpg', price: '150.000đ', priceNum: 150000, category: 'Sang trọng', cultureStory: 'Món ăn danh tiếng hơn 150 năm.', tastingTip: 'Ăn kèm bún, mắm tôm và thì là.', englishMenu: 'Turmeric Grilled Fish with Dill.', distance: '1.5 km' }
     ]
   },
   {
@@ -889,6 +889,66 @@ function buildCustomTourStops(
   hobby: string,
   radius: number
 ): { stops: StopItem[]; totalDistance: string; totalCost: string; status: string } {
+  const locLower = (location || '').toLowerCase();
+  
+  // Pre-curated local signature fallback stops if specific location is matched
+  let regionalStops: StopItem[] = [];
+  if (locLower.includes('đà nẵng')) {
+    regionalStops = [
+      { time: '08:00', mealType: 'Sáng', name: 'Mì Quảng Trứ Danh', address: 'Đường Lê Đình Dương, gần Cầu Rồng, Hải Châu, Đà Nẵng', image: '/picture/provinces/đà nẵng.jpg', price: '45.000đ', priceNum: 45000, category: 'Đặc sản • Mì Quảng', cultureStory: 'Mì Quảng đậm đà nước lèo hầm xương tôm thịt nguyên bản, biểu tượng ẩm thực xứ Quảng.', tastingTip: 'Trộn đều bánh tráng nướng bóp vụn và rau sống búp tươi.', englishMenu: 'Quang Style Turmeric Noodles with Shrimp and Pork.', distance: '0.0 km (Khởi hành)' },
+      { time: '12:00', mealType: 'Trưa', name: 'Bánh xèo tôm nhảy', address: 'Đường Hoàng Diệu, gần Chợ Mới, Thanh Khê, Đà Nẵng', image: '/picture/provinces/đà nẵng.jpg', price: '60.000đ', priceNum: 60000, category: 'Đặc sản • Bánh xèo', cultureStory: 'Bánh xèo giòn rụm nhân tôm đất tươi sống đánh bắt từ đầm phá.', tastingTip: 'Cuốn bánh tráng mỏng cùng rau rừng và chấm nước mắm đậu phộng.', englishMenu: 'Crispy Central Vietnamese Pancake with River Prawns.', distance: '1.2 km từ điểm trước' },
+      { time: '15:30', mealType: 'Chiều', name: 'Gỏi cá Nam Ô', address: 'Làng chài Nam Ô, chân đèo Hải Vân, Liên Chiểu, Đà Nẵng', image: '/picture/provinces/đà nẵng.jpg', price: '80.000đ', priceNum: 80000, category: 'Sang trọng • Hải sản', cultureStory: 'Đặc sản trứ danh lâu đời của làng chài Nam Ô với nước sốt cá cốt đậm đà.', tastingTip: 'Cuốn bánh tráng với rau rừng và chấm đẫm nước sốt đặc chế.', englishMenu: 'Nam O Raw Fish Salad with Forest Herbs.', distance: '1.5 km từ điểm trước' },
+      { time: '19:00', mealType: 'Tối', name: 'Hải sản biển Mỹ Khê', address: 'Đường Võ Nguyên Giáp, sát bờ biển Mỹ Khê, Sơn Trà, Đà Nẵng', image: '/picture/provinces/đà nẵng.jpg', price: '180.000đ', priceNum: 180000, category: 'Sang trọng • Hải sản', cultureStory: 'Hải sản tươi sống đánh bắt trực tiếp từ vịnh Đà Nẵng về đêm.', tastingTip: 'Thưởng thức hấp sả gừng hoặc nướng muối ớt.', englishMenu: 'Fresh My Khe Beach Seafood Feast.', distance: '1.8 km từ điểm trước' }
+    ];
+  } else if (locLower.includes('huế') || locLower.includes('thừa thiên huế')) {
+    regionalStops = [
+      { time: '08:00', mealType: 'Sáng', name: 'Bún bò Huế O Phượng', address: 'Đường Chi Lăng, gần Cầu Gia Hội, Huế', image: '/picture/provinces/thua-thien-hue.jpg', price: '50.000đ', priceNum: 50000, category: 'Đặc sản • Bún bò', cultureStory: 'Hương vị bún bò cung đình đậm đà sả, ruốc Huế và nước dùng thơm ngát.', tastingTip: 'Thêm bắp chuối bào, giá đỗ và sa tế cay nồng.', englishMenu: 'Authentic Hue Beef Noodle Soup with Lemongrass.', distance: '0.0 km (Khởi hành)' },
+      { time: '12:00', mealType: 'Trưa', name: 'Cơm hến Vĩ Dạ', address: 'Đường Hàn Mặc Tử, cồn Hến, Vĩ Dạ, Huế', image: '/picture/provinces/thua-thien-hue.jpg', price: '30.000đ', priceNum: 30000, category: 'Bình dân • Cơm hến', cultureStory: 'Món ăn dân dã xứ Huế kết hợp hến sông Hương ngọt lịm và ruốc thơm.', tastingTip: 'Trộn đều tất cả nguyên liệu cay toát mồ hôi.', englishMenu: 'Hue Baby Clam Rice with Herbs & Peanuts.', distance: '1.1 km từ điểm trước' },
+      { time: '15:30', mealType: 'Chiều', name: 'Bánh bèo, nậm, lọc Gia Vỹ', address: 'Đường Phạm Hồng Thái, trung tâm Phố cổ Huế', image: '/picture/provinces/thua-thien-hue.jpg', price: '45.000đ', priceNum: 45000, category: 'Ăn vặt • Bánh cung đình', cultureStory: 'Bộ ba bánh truyền thống Huế tinh tế làm từ bột gạo và tôm thịt.', tastingTip: 'Chan nước mắm ngọt vừa đủ để cảm nhận vị dẻo mịn.', englishMenu: 'Hue Royal Steamed Rice Cakes Trio.', distance: '0.8 km từ điểm trước' },
+      { time: '19:00', mealType: 'Tối', name: 'Bánh khoái & Nem lụi', address: 'Đường Đinh Tiên Hoàng, sát Đại Nội Huế', image: '/picture/provinces/thua-thien-hue.jpg', price: '85.000đ', priceNum: 85000, category: 'Đặc sản • Bánh khoái', cultureStory: 'Bánh khoái giòn rụm nhân tôm thịt ăn kèm nước lèo gan đậu phộng độc quyền.', tastingTip: 'Cuốn bánh và nem lụi với rau sống khế chua chát.', englishMenu: 'Hue Crispy Pancake & Lemongrass Pork Skewers.', distance: '1.4 km từ điểm trước' }
+    ];
+  } else if (locLower.includes('nha trang') || locLower.includes('khánh hòa')) {
+    regionalStops = [
+      { time: '08:00', mealType: 'Sáng', name: 'Bún chả cá Nha Trang', address: 'Đường Yersin, gần Chợ Đầm, Nha Trang', image: '/picture/provinces/khanh-hoa.jpg', price: '45.000đ', priceNum: 45000, category: 'Đặc sản • Bún chả cá', cultureStory: 'Nước dùng trong vắt nấu từ cá biển tươi ngọt lịm không tanh.', tastingTip: 'Thêm mắm tôm và hành ngâm chua ngọt.', englishMenu: 'Nha Trang Clear Fish Cake Vermicelli Soup.', distance: '0.0 km (Khởi hành)' },
+      { time: '12:00', mealType: 'Trưa', name: 'Nem nướng Ninh Hòa', address: 'Đường Lê Hồng Phong, Nha Trang', image: '/picture/provinces/khanh-hoa.jpg', price: '65.000đ', priceNum: 65000, category: 'Đặc sản • Nem nướng', cultureStory: 'Nem nướng than hoa thơm phức cuốn bánh tráng chiên giòn và rau sống.', tastingTip: 'Chấm đẫm nước sốt thịt bằm đậu phộng sền sệt.', englishMenu: 'Ninh Hoa Grilled Pork Skewers with Rice Paper.', distance: '1.3 km từ điểm trước' },
+      { time: '15:30', mealType: 'Chiều', name: 'Bánh căn mực tươi', address: 'Đường Tháp Bà, sát Tháp Bà Ponagar, Nha Trang', image: '/picture/provinces/khanh-hoa.jpg', price: '40.000đ', priceNum: 40000, category: 'Ăn vặt • Bánh căn', cultureStory: 'Bánh căn đổ khuôn đất nung nóng hổi nhân mực tươi giòn sần sật.', tastingTip: 'Nhúng ngập bánh vào chén nước mắm xoài bằm.', englishMenu: 'Mini Rice Pancakes with Fresh Squid.', distance: '1.0 km từ điểm trước' },
+      { time: '19:00', mealType: 'Tối', name: 'Hải sản tháp Bà / Bờ kè', address: 'Đường Trần Phú, sát vịnh Nha Trang', image: '/picture/provinces/khanh-hoa.jpg', price: '200.000đ', priceNum: 200000, category: 'Sang trọng • Hải sản', cultureStory: 'Hải sản phong phú đánh bắt từ vịnh biển sâu Nha Trang.', tastingTip: 'Thưởng thức tôm hùm nướng bơ tỏi và ốc hương trứng muối.', englishMenu: 'Nha Trang Bay Seafood Feast.', distance: '2.0 km từ điểm trước' }
+    ];
+  } else if (locLower.includes('vũng tàu') || locLower.includes('bà rịa')) {
+    regionalStops = [
+      { time: '08:00', mealType: 'Sáng', name: 'Bánh khọt Cô Ba Vũng Tàu', address: 'Đường Hoàng Hoa Thám, Bãi Trước, Vũng Tàu', image: '/picture/provinces/ba-ria-vung-tau.jpg', price: '60.000đ', priceNum: 60000, category: 'Đặc sản • Bánh khọt', cultureStory: 'Bánh khọt vàng giòn nhân tôm tươi rắc tôm chấy đỏ rực.', tastingTip: 'Cuốn rau cải xanh, tía tô chấm nước mắm chua ngọt.', englishMenu: 'Vung Tau Mini Crispy Shrimp Pancakes.', distance: '0.0 km (Khởi hành)' },
+      { time: '12:00', mealType: 'Trưa', name: 'Lẩu cá đuối Trương Công Định', address: 'Đường Trương Công Định, trung tâm Vũng Tàu', image: '/picture/provinces/ba-ria-vung-tau.jpg', price: '160.000đ', priceNum: 160000, category: 'Đặc sản • Lẩu', cultureStory: 'Nồi lẩu cá đuối chua cay đậm đà măng chua và rau giòn.', tastingTip: 'Nhúng bún tươi và măng chua giòn sần sật.', englishMenu: 'Stingray Hotpot with Sour Bamboo Shoots.', distance: '1.2 km từ điểm trước' },
+      { time: '15:30', mealType: 'Chiều', name: 'Bánh bông lan trứng muối Gốc Cột Điện', address: 'Đường Nguyễn Trường Tộ, Vũng Tàu', image: '/picture/provinces/ba-ria-vung-tau.jpg', price: '35.000đ', priceNum: 35000, category: 'Ăn vặt • Bánh ngọt', cultureStory: 'Bánh bông lan mềm mịn thơm béo vị trứng muối và phô mai.', tastingTip: 'Thưởng thức khi bánh còn ấm.', englishMenu: 'Salted Egg Yolk Sponge Cake.', distance: '0.9 km từ điểm trước' },
+      { time: '19:00', mealType: 'Tối', name: 'Hải sản Gành Hào', address: 'Đường Trần Phú, sát biển Bãi Trước, Vũng Tàu', image: '/picture/provinces/ba-ria-vung-tau.jpg', price: '220.000đ', priceNum: 220000, category: 'Sang trọng • Hải sản', cultureStory: 'Nhà hàng hải sản view biển ngắm hoàng hôn đẹp nhất Vũng Tàu.', tastingTip: 'Thưởng thức ghẹ rang me và mực một nắng nướng.', englishMenu: 'Ganh Hao Oceanside Seafood Dining.', distance: '2.1 km từ điểm trước' }
+    ]
+  } else if (locLower.includes('cần thơ') || locLower.includes('miền tây')) {
+    regionalStops = [
+      { time: '08:00', mealType: 'Sáng', name: 'Bánh xèo miền Tây củ hủ dừa', address: 'Đường Lê Lai, gần Bến Ninh Kiều, Cần Thơ', image: '/picture/provinces/cần thơ.jpg', price: '50.000đ', priceNum: 50000, category: 'Đặc sản • Bánh xèo', cultureStory: 'Bánh xèo giòn vàng rụm nhân củ hủ dừa ngọt mát và tép bạc sông.', tastingTip: 'Cuốn rau vườn dân dã chấm mắm me chua ngọt.', englishMenu: 'Mekong Delta Giant Crispy Pancake.', distance: '0.0 km (Khởi hành)' },
+      { time: '12:00', mealType: 'Trưa', name: 'Lẩu cá kèo lá giang', address: 'Khu bờ kè Cái Răng, Cần Thơ', image: '/picture/provinces/cần thơ.jpg', price: '150.000đ', priceNum: 150000, category: 'Sang trọng • Lẩu', cultureStory: 'Nồi lẩu chua thanh vị lá giang ăn kèm cá kèo tươi sống đồng bằng.', tastingTip: 'Nhúng bông súng, rau đắng và cù nèo.', englishMenu: 'Mekong Delta River Catfish Hotpot.', distance: '1.4 km từ điểm trước' },
+      { time: '15:30', mealType: 'Chiều', name: 'Bánh tằm bì nước cốt dừa', address: 'Hẻm Phan Đình Phùng, Ninh Kiều, Cần Thơ', image: '/picture/provinces/cần thơ.jpg', price: '35.000đ', priceNum: 35000, category: 'Bình dân • Ăn vặt', cultureStory: 'Bánh tằm dẻo bùi béo ngậy rưới nước cốt dừa đậm đà.', tastingTip: 'Ăn kèm bì thính và nước mắm tỏi ớt.', englishMenu: 'Silky Rice Noodles with Coconut Milk & Pork.', distance: '0.9 km từ điểm trước' },
+      { time: '19:00', mealType: 'Tối', name: 'Cá lóc nướng trui đồng quê', address: 'Bến Ninh Kiều, Cần Thơ', image: '/picture/provinces/cần thơ.jpg', price: '120.000đ', priceNum: 120000, category: 'Đặc sản • Nướng', cultureStory: 'Cá lóc nướng rơm thơm lừng đậm chất miền sông nước Nam Bộ.', tastingTip: 'Cuốn bánh tráng bún rau sống chấm mắm nêm.', englishMenu: 'Straw-Grilled Snakehead Fish Rolls.', distance: '1.2 km từ điểm trước' }
+    ]
+  } else if (locLower.includes('sài gòn') || locLower.includes('tp.hồ chí minh') || locLower.includes('hồ chí minh')) {
+    regionalStops = [
+      { time: '08:00', mealType: 'Sáng', name: 'Cơm tấm Sài Gòn sườn bì chả', address: 'Đường Đinh Tiên Hoàng, Quận 1, TP.HCM', image: '/picture/provinces/tp hồ chí minh.jpg', price: '55.000đ', priceNum: 55000, category: 'Đặc sản • Cơm tấm', cultureStory: 'Hạt cơm tấm thơm ngon sườn nướng mật ong đậm đà phong cách Nam Bộ.', tastingTip: 'Thêm nước mắm kẹo ngọt cay.', englishMenu: 'Saigon Broken Rice with Honey Grilled Pork.', distance: '0.0 km (Khởi hành)' },
+      { time: '12:00', mealType: 'Trưa', name: 'Bánh mì chảo / Bánh mì Sài Gòn', address: 'Đường Lý Chính Thắng, Quận 3, TP.HCM', image: '/picture/provinces/tp hồ chí minh.jpg', price: '45.000đ', priceNum: 45000, category: 'Bình dân • Bánh mì', cultureStory: 'Bánh mì nóng giòn kết hợp chảo thập cẩm pate trứng xúc xích.', tastingTip: 'Chấm bánh mì ngập sốt nóng.', englishMenu: 'Saigon Sizzling Baguette with Pate & Egg.', distance: '1.1 km từ điểm trước' },
+      { time: '15:30', mealType: 'Chiều', name: 'Bánh tráng trộn Sài Gòn', address: 'Khu vực Hồ Con Rùa, Quận 3, TP.HCM', image: '/picture/provinces/tp hồ chí minh.jpg', price: '30.000đ', priceNum: 30000, category: 'Bình dân • Ăn vặt', cultureStory: 'Món ăn vặt tuổi thơ trứ danh giới trẻ Sài thành.', tastingTip: 'Trộn đều trước khi thưởng thức.', englishMenu: 'Saigon Mixed Rice Paper Snack.', distance: '0.8 km từ điểm trước' },
+      { time: '19:00', mealType: 'Tối', name: 'Lẩu bò Ba Toa Sài Gòn', address: 'Khu phố ẩm thực Quận 5, TP.HCM', image: '/picture/provinces/tp hồ chí minh.jpg', price: '160.000đ', priceNum: 160000, category: 'Sang trọng • Lẩu', cultureStory: 'Lẩu bò thơm nức mùi sả thuốc bắc ấm cúng đêm Sài Gòn.', tastingTip: 'Nhúng mì tươi và chao.', englishMenu: 'Saigon Beef Hotpot with Herbal Broth.', distance: '1.5 km từ điểm trước' }
+    ]
+  }
+
+  if (regionalStops.length > 0) {
+    const totalDistNum = Math.min(Number(regionalStops.reduce((acc, s, idx) => idx === 0 ? 0 : acc + Number(s.distance.split(' ')[0]), 0).toFixed(1)), radius);
+    const totalCostNum = regionalStops.reduce((acc, s) => acc + (s.priceNum || 50000), 0);
+    return {
+      stops: regionalStops,
+      totalDistance: `${totalDistNum} km`,
+      totalCost: `${totalCostNum.toLocaleString('vi-VN')}đ`,
+      status: `Lộ trình chuẩn tối ưu cho "${need}" tại ${location} (Bán kính <= ${radius}km)`
+    };
+  }
+
+  // Dynamic Algorithmic Construction if no pre-curated match
   const tier = getBudgetTier(budgetVal);
   let pool = FOOD_ITEMS.filter(f => f.category === tier);
   if (pool.length < 4) pool = FOOD_ITEMS;
@@ -937,21 +997,22 @@ function buildCustomTourStops(
       mealType: mealTypes[i] || 'Ăn uống',
       name: dish.name,
       food: dish,
-      address: `Quán ${dish.name} gần điểm đến, ${locName}`,
+      address: `Quán ${dish.name} gần điểm tham quan nổi tiếng, ${locName}`,
       image: `/${dish.image}`,
       price: `${(dish.price * 1000).toLocaleString('vi-VN')}đ`,
       priceNum: dish.price * 1000,
       category: `${dish.category} • ${dish.tags.join(', ')}`,
-      cultureStory: dish.cultureStory || `Món ${dish.name} đặc sắc với hương vị đậm đà, được tuyển chọn từ kho ẩm thực di sản.`,
-      tastingTip: dish.tastingTip || 'Thưởng thức khi còn nóng hổi để cảm nhận trọn vẹn hương vị tuyệt hảo.',
-      englishMenu: `${dish.name} - Authentic local signature dish.`,
+      cultureStory: dish.cultureStory || `Món ${dish.name} đặc sắc với hương vị đậm đà, được tuyển chọn từ kho ẩm thực di sản ${locName}.`,
+      tastingTip: dish.tastingTip || 'Thưởng thức khi còn nóng hổi cùng các gia vị kèm theo để cảm nhận trọn vẹn hương vị tuyệt hảo.',
+      englishMenu: `${dish.name} - Authentic local signature dish prepared with traditional recipe.`,
       distance: i === 0 ? '0.0 km (Khởi hành)' : `${dist} km từ điểm trước`
     };
   });
 
   const totalDistNum = Number(stops.reduce((acc, s, idx) => idx === 0 ? 0 : acc + Number(s.distance.split(' ')[0]), 0).toFixed(1));
   const finalDist = Math.min(totalDistNum, radius);
-  const totalCostStr = `${(currentCost * 1000).toLocaleString('vi-VN')}đ`;
+  const totalCostNum = stops.reduce((acc, s) => acc + (s.priceNum || 50000), 0);
+  const totalCostStr = `${totalCostNum.toLocaleString('vi-VN')}đ`;
   const status = `Rất phù hợp cho "${need}" (Bán kính <= ${radius}km)`;
 
   return { stops, totalDistance: `${finalDist} km`, totalCost: totalCostStr, status };
@@ -1158,7 +1219,22 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
   });
 
   const handleSelectThemeTour = (tour: ThemeTour) => {
-    setActiveTour(tour);
+    const stops = tour.stops.map((s, idx) => ({
+      ...s,
+      priceNum: s.priceNum || (parseInt(s.price.replace(/\D/g, '')) || 50000),
+      distance: s.distance || (idx === 0 ? '0.0 km' : `${(0.8 + idx * 0.4).toFixed(1)} km`)
+    }));
+    const totalCostNum = stops.reduce((acc, s) => acc + (s.priceNum || 50000), 0);
+    const totalDistNum = Number(stops.reduce((acc, s, idx) => idx === 0 ? 0 : acc + Number((s.distance || '0').split(' ')[0]), 0).toFixed(1));
+    
+    const enrichedTour: ThemeTour = {
+      ...tour,
+      stops,
+      totalCost: `${totalCostNum.toLocaleString('vi-VN')}đ`,
+      totalDistance: `${totalDistNum > 0 ? totalDistNum : (stops.length * 0.9).toFixed(1)} km`
+    };
+
+    setActiveTour(enrichedTour);
     setActiveStopIndex(0);
     changeStep('render-details');
   };
@@ -1417,7 +1493,7 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                     {
                       name: 'Lẩu Mắm Miền Tây',
                       tag: 'Mùa Nước Nổi',
-                      img: '/picture/cach-nau-lau-mam-don-gian.jpg',
+                      img: '/picture/4351473951ef5607250a046cb3aefef0.jpg',
                       story: 'Tinh hoa ẩm thực vùng sông nước Đồng bằng sông Cửu Long, biểu trưng cho sự giao thoa văn hóa Việt - Khmer - Hoa. Nước lẩu nấu từ mắm cá linh, cá sặc đồng hòa cùng nước dừa tươi ngọt lành.',
                       tastingTip: 'Thả đĩa rau đồng hoa nội phong phú hơn 20 loại: bông điên điển, bông so đũa, rau nhút, cọng súng; nhúng cá béo, tôm càng và thịt ba chỉ tươi rói.',
                       englishMenu: 'Mekong Delta Fermented Fish Hotpot – A deeply savory aromatic broth made from fermented river fish, coconut water, fresh seafood and wild delta greens.'
@@ -1425,7 +1501,7 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                     {
                       name: 'Cá Lóc Nướng Trui',
                       tag: 'Khai Hoang Mở Cõi',
-                      img: '/picture/20170607101920-ca-loc-nuong-trui-1.jpg',
+                      img: '/picture/517e741c904473e101991d6b34f9d6b9.jpg',
                       story: 'Món ăn nguyên bản từ thời khai hoang mở đất Nam Bộ. Cá lóc đồng vừa bắt dưới mương chỉ cần xiên thanh tre cắm xuống đất, phủ rơm khô đốt rực lửa ngay bên bờ ruộng thơm lừng mùi rơm mới.',
                       tastingTip: 'Cạo sạch lớp vảy cháy xém để lộ thịt cá trắng phau thơm nức mùi khói rơm; rưới mỡ hành, cuốn bánh tráng rau rừng rồi chấm ngập chén mắm me chua ngọt dầm ớt cay.',
                       englishMenu: 'Straw-Roasted Snakehead Fish – Whole wild snakehead fish roasted directly inside blazing dry rice straw, served with wild herbs and tangy tamarind dip.'
@@ -2042,7 +2118,7 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
           <div className="space-y-12 max-w-7xl mx-auto py-12 animate-motion-fadeIn">
             <div className="flex flex-col md:flex-row items-center justify-between bg-white p-8 rounded-[35px] border border-[#D4B872]/30 shadow-sm gap-4">
               <div>
-                <button onClick={() => changeStep('start')} className="text-[10px] font-black font-sans-montserrat uppercase tracking-widest text-[#8B0000] hover:underline flex items-center gap-1 mb-2"><ArrowLeft className="w-4 h-4" /> Quay lại trang chủ</button>
+                <button onClick={() => changeStep('themed-tour')} className="text-[10px] font-black font-sans-montserrat uppercase tracking-widest text-[#8B0000] hover:underline flex items-center gap-1 mb-2"><ArrowLeft className="w-4 h-4" /> Quay lại</button>
                 <h2 className="font-serif-playfair text-4xl font-black text-[#8B0000]">{activeTour.title}</h2>
                 <p className="font-serif-lora text-xs text-[#2C221E]/70 italic mt-1">{activeTour.desc}</p>
               </div>
@@ -2051,65 +2127,8 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
               </button>
             </div>
 
-            {/* ROADMAP DẪN ĐƯỜNG TRỰC TUYẾN & STEP-BY-STEP */}
-            <div className="bg-gradient-to-r from-[#1E5631]/10 via-[#D4B872]/20 to-[#8B0000]/10 p-8 rounded-[40px] border border-[#1E5631]/30 shadow-md space-y-6">
-              <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 bg-[#1E5631] text-[#D4B872] rounded-2xl flex items-center justify-center shadow">
-                    <Compass className="w-6 h-6 animate-spin" />
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-black font-sans-montserrat text-[#1E5631] uppercase tracking-widest bg-[#1E5631]/10 px-3 py-1 rounded-full">Roadmap Dẫn Đường Google Maps</span>
-                    <h3 className="font-serif-playfair text-2xl font-black text-[#2C221E] mt-1">
-                      Điểm đến hiện tại ({activeStopIndex + 1}/{activeTour.stops.length}): <span className="text-[#8B0000]">{activeTour.stops[activeStopIndex]?.name}</span>
-                    </h3>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <a 
-                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activeTour.stops[activeStopIndex]?.name + ' ' + (activeTour.stops[activeStopIndex]?.address || activeTour.title))}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="bg-[#1E5631] hover:bg-[#2E8B57] text-white px-5 py-3.5 rounded-2xl font-sans-poppins font-bold text-xs shadow transition-all flex items-center gap-2 focus-ring-accessible"
-                  >
-                    <Navigation className="w-4 h-4" /> Mở Google Maps
-                  </a>
-                  {activeStopIndex < activeTour.stops.length - 1 ? (
-                    <button 
-                      onClick={() => setActiveStopIndex(prev => prev + 1)}
-                      className="bg-[#8B0000] hover:bg-[#A00000] text-white px-6 py-3.5 rounded-2xl font-sans-poppins font-bold text-xs shadow transition-all flex items-center gap-2 focus-ring-accessible"
-                    >
-                      Tiếp tục điểm tiếp theo <ChevronRight className="w-4 h-4" />
-                    </button>
-                  ) : (
-                    <button 
-                      onClick={() => changeStep('checkout')}
-                      className="bg-[#D4B872] hover:bg-[#C2A55F] text-[#2C221E] px-6 py-3.5 rounded-2xl font-sans-poppins font-bold text-xs shadow transition-all flex items-center gap-2 focus-ring-accessible"
-                    >
-                      Hoàn thành lộ trình & Đặt chỗ <CheckCircle className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* ROADMAP PROGRESS BAR */}
-              <div className="grid grid-flow-col auto-cols-fr gap-2 pt-2 overflow-x-auto">
-                {activeTour.stops.map((stop, sIdx) => (
-                  <div 
-                    key={sIdx} 
-                    onClick={() => setActiveStopIndex(sIdx)}
-                    className={`cursor-pointer p-3 rounded-2xl border transition-all text-center flex flex-col items-center gap-1 ${sIdx === activeStopIndex ? 'bg-[#8B0000] text-white border-[#8B0000] shadow-lg scale-105' : sIdx < activeStopIndex ? 'bg-[#1E5631]/20 text-[#1E5631] border-[#1E5631]/30' : 'bg-white text-[#2C221E]/60 border-gray-200'}`}
-                  >
-                    <span className="text-[10px] font-black font-sans-montserrat uppercase">Bước {sIdx + 1}</span>
-                    <span className="text-xs font-bold line-clamp-1">{stop.name}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
             {/* DASHBOARD TỔNG KẾT HÀNH TRÌNH (KHỐI 4.3) */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-white p-6 rounded-[30px] border border-[#D4B872]/30 shadow-sm flex items-center gap-4">
                 <div className="w-14 h-14 bg-[#8B0000]/10 rounded-2xl flex items-center justify-center text-[#8B0000]">
                   <Navigation className="w-7 h-7" />
@@ -2129,17 +2148,6 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                   <div className="text-[10px] font-bold font-sans-montserrat text-[#2C221E]/60 uppercase tracking-widest">Tổng Chi Phí Dự Kiến</div>
                   <div className="text-2xl font-black font-sans-montserrat text-[#8B0000]">{activeTour.totalCost || '290.000đ'}</div>
                   <div className="text-[10px] text-[#1E5631] font-semibold">✓ Khớp ngân sách lựa chọn</div>
-                </div>
-              </div>
-
-              <div className="bg-white p-6 rounded-[30px] border border-[#D4B872]/30 shadow-sm flex items-center gap-4">
-                <div className="w-14 h-14 bg-[#1E5631]/10 rounded-2xl flex items-center justify-center text-[#1E5631]">
-                  <Sparkles className="w-7 h-7" />
-                </div>
-                <div>
-                  <div className="text-[10px] font-bold font-sans-montserrat text-[#2C221E]/60 uppercase tracking-widest">Đánh Giá Phù Hợp</div>
-                  <div className="text-sm font-bold font-sans-montserrat text-[#2C221E] line-clamp-1">{activeTour.status || 'Rất phù hợp cho mục đích chuyến đi'}</div>
-                  <div className="text-[10px] text-[#8B0000] font-semibold">★ Tối ưu TSP & Kho đồ ăn</div>
                 </div>
               </div>
             </div>
@@ -2194,37 +2202,69 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                 </div>
               </div>
 
-              {/* MAP & ACTION MENU */}
+              {/* ROADMAP & ACTION MENU */}
               <div className="space-y-8">
-                <div className="bg-white p-8 rounded-[40px] border border-[#D4B872]/30 shadow-sm space-y-4">
-                  <h3 className="font-serif-playfair font-bold text-lg text-[#8B0000] flex items-center gap-2">
-                    <Navigation className="w-5 h-5 text-[#D4B872]" /> Bản Đồ & Khoảng Cách
-                  </h3>
-                  <div className="relative h-64 rounded-3xl overflow-hidden border border-[#D4B872]/40 shadow-inner bg-[#FAF6EE] flex flex-col items-center justify-center p-6 text-center">
-                    <MapPin className="w-12 h-12 text-[#8B0000] animate-bounce mb-2 relative z-10" />
-                    <p className="font-serif-playfair text-sm font-bold text-[#8B0000]">Bản đồ tương tác trực tuyến</p>
-                    <p className="font-serif-lora text-xs text-[#2C221E]/60 mt-1 italic">Tối ưu thời gian & khoảng cách di chuyển</p>
-                    
-                    <a href="https://www.google.com/maps" target="_blank" rel="noreferrer" className="mt-4 bg-[#8B0000] hover:bg-[#A52A2A] text-white text-xs font-sans-poppins font-bold px-5 py-3 rounded-xl shadow z-10 transition-colors focus-ring-accessible">
-                      Mở Google Maps Chỉ Đường
+                <div className="bg-white p-6 rounded-[35px] border border-[#D4B872]/30 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-serif-playfair font-bold text-base text-[#8B0000] flex items-center gap-2">
+                      <Navigation className="w-4 h-4 text-[#D4B872]" /> Roadmap Dẫn Đường
+                    </h3>
+                    <span className="text-[10px] font-black font-sans-montserrat bg-[#8B0000]/10 text-[#8B0000] px-3 py-1 rounded-full">
+                      {activeStopIndex + 1} / {activeTour.stops.length}
+                    </span>
+                  </div>
+
+                  <div className="bg-[#FAF6EE] p-5 rounded-3xl border border-[#D4B872]/40 space-y-3 text-left shadow-inner">
+                    <div className="font-serif-playfair font-bold text-base text-[#8B0000]">
+                      {activeTour.stops[activeStopIndex]?.name || 'Điểm dừng'}
+                    </div>
+                    <div className="font-serif-lora text-xs text-[#2C221E]/70 flex items-center gap-1.5">
+                      <MapPin className="w-4 h-4 text-[#8B0000] shrink-0" />
+                      <span>{activeTour.stops[activeStopIndex]?.address}</span>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <button 
+                        onClick={() => setActiveStopIndex(prev => Math.max(0, prev - 1))}
+                        disabled={activeStopIndex === 0}
+                        className="flex-1 bg-white hover:bg-gray-50 text-[#8B0000] border border-[#8B0000]/30 py-2.5 rounded-xl text-xs font-bold disabled:opacity-40 transition-colors"
+                      >
+                        ← Điểm trước
+                      </button>
+                      <button 
+                        onClick={() => setActiveStopIndex(prev => Math.min(activeTour.stops.length - 1, prev + 1))}
+                        disabled={activeStopIndex === activeTour.stops.length - 1}
+                        className="flex-1 bg-[#8B0000] hover:bg-[#A52A2A] text-white py-2.5 rounded-xl text-xs font-bold disabled:opacity-40 transition-colors"
+                      >
+                        Điểm tiếp →
+                      </button>
+                    </div>
+
+                    <a 
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent((activeTour.stops[activeStopIndex]?.name || '') + ' ' + (activeTour.stops[activeStopIndex]?.address || ''))}`} 
+                      target="_blank" 
+                      rel="noreferrer" 
+                      className="w-full bg-[#1E5631] hover:bg-[#2E8B57] text-white text-xs font-sans-poppins font-bold py-3 px-4 rounded-xl shadow transition-colors flex items-center justify-center gap-2 focus-ring-accessible block text-center"
+                    >
+                      <Navigation className="w-3.5 h-3.5" /> Mở Google Maps Dẫn Đường
                     </a>
                   </div>
                 </div>
 
                 {/* ACTION MENU */}
                 <div className="bg-gradient-to-br from-[#8B0000] to-[#5C0000] p-8 rounded-[40px] text-[#FAF6EE] shadow-xl space-y-6 border border-[#D4B872]/50">
-                  <h3 className="font-serif-playfair font-bold text-2xl text-[#D4B872]">Hành Động Tiếp Theo</h3>
-                  <p className="font-serif-lora text-xs text-[#FAF6EE]/80 italic">Xác nhận đặt chỗ hoặc tùy chỉnh lại hành trình.</p>
+                  <h3 className="font-serif-playfair font-bold text-2xl text-[#D4B872]">Thao Tác Lộ Trình</h3>
+                  <p className="font-serif-lora text-xs text-[#FAF6EE]/80 italic">Xác nhận đặt tour hoặc quay về trang khám phá.</p>
                   
                   <div className="space-y-3">
                     <button onClick={() => changeStep('checkout')} className="w-full bg-[#D4B872] text-[#2C221E] hover:bg-[#C2A55F] font-sans-poppins font-bold py-4 rounded-2xl shadow text-xs transition-colors focus-ring-accessible">
-                      💳 Đặt Tour Trải Nghiệm
+                      Đặt Tour Trải Nghiệm
                     </button>
                     <button onClick={handleHoldTour} className="w-full bg-[#1E5631]/30 hover:bg-[#1E5631]/50 text-[#FAF6EE] border border-[#1E5631]/60 font-sans-poppins font-bold py-4 rounded-2xl shadow text-xs transition-colors flex items-center justify-center gap-2 focus-ring-accessible">
-                      🛡️ Giữ Chỗ 24h (Chần chừ? Giữ miễn phí)
+                      Giữ Chỗ Miễn Phí 24h
                     </button>
-                    <button onClick={() => changeStep('start')} className="w-full bg-transparent text-[#FAF6EE] hover:bg-white/10 font-sans-poppins font-bold py-4 rounded-2xl border border-[#D4B872]/50 text-xs transition-colors focus-ring-accessible">
-                      🔄 Về Trang Chủ
+                    <button onClick={() => changeStep('main-menu')} className="w-full bg-transparent text-[#FAF6EE] hover:bg-white/10 font-sans-poppins font-bold py-4 rounded-2xl border border-[#D4B872]/50 text-xs transition-colors focus-ring-accessible">
+                      Quay lại
                     </button>
                   </div>
                 </div>
@@ -2258,7 +2298,7 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
               </div>
               <div className="border-t border-[#D4B872]/30 pt-3 flex justify-between font-serif-playfair font-bold text-sm">
                 <span>Tổng chi phí:</span>
-                <span className="text-[#8B0000]">290.000đ / người</span>
+                <span className="text-[#8B0000]">{activeTour.totalCost || '290.000đ'} / người</span>
               </div>
             </div>
 
@@ -2314,7 +2354,7 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
               </div>
               <div className="border-t border-[#D4B872]/30 pt-3 flex justify-between font-serif-playfair font-bold text-sm">
                 <span>Tổng chi phí:</span>
-                <span className="text-[#8B0000]">290.000đ</span>
+                <span className="text-[#8B0000]">{activeTour.totalCost || '290.000đ'}</span>
               </div>
             </div>
 
