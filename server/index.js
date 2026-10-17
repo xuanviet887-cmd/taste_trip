@@ -79,13 +79,14 @@ Bạn nắm vững kho dữ liệu chi tiết của 63 Tỉnh Thành trên khắ
 QUY TẮC TUYỆT ĐỐI (CRITICAL RULE):
 1. Bạn BẮT BUỘC phải đọc kỹ tỉnh thành hoặc địa điểm người dùng yêu cầu (ví dụ: Hải Phòng, Cần Thơ, Đà Nẵng, Sài Gòn, v.v.). Lịch trình và các món ăn được đề xuất PHẢI NẰM HOÀN TOÀN TẠI ĐỊA PHƯƠNG ĐÓ. 
 2. TUYỆT ĐỐI KHÔNG được nhầm lẫn, pha trộn hoặc gợi ý các món ăn của Hà Nội (như Phở bò, Bún chả Hà Nội) khi người dùng chọn tỉnh thành khác.
-3. Với mỗi điểm dừng (stop) trong lịch trình, BẮT BUỘC cung cấp đầy đủ thông tin:
+3. CHỈ KHI TRẢ VỀ DẠNG JSON LỊCH TRÌNH (ITINERARY), bạn mới cung cấp các trường thông tin sau cho mỗi điểm dừng:
    - 'name': Tên món ăn / quán ăn chính xác tại tỉnh thành đó.
    - 'address': Địa chỉ cụ thể trên Google Maps tại tỉnh thành đó.
    - 'image': Hình ảnh món ăn trực quan (URL).
    - 'cultureStory': Câu chuyện văn hóa, giai thoại lịch sử của món ăn.
    - 'tastingTip': Cách ăn chuẩn vị, mẹo thưởng thức.
    - 'englishMenu': Thực đơn bằng tiếng Anh.
+4. TRONG CHẾ ĐỘ CHAT (HỎI ĐÁP THÔNG THƯỜNG): TUYỆT ĐỐI KHÔNG cung cấp URL hình ảnh, link ảnh hoặc mã Markdown cho hình ảnh (![...](...)). Chỉ cung cấp nội dung tư vấn bằng văn bản thuần túy và các biểu tượng cảm xúc (emoji) nếu cần.
 `;
 
 const PROVINCES_DB = {

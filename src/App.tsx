@@ -7,6 +7,41 @@ import {
   CheckCircle, ChevronRight, ArrowLeft, Calendar, X, DollarSign, Clock3, BookOpen, Camera, Send, Globe
 } from 'lucide-react';
 
+type ChatLine = { kind: 'heading' | 'bullet' | 'number' | 'paragraph'; text: string };
+
+function formatChatLines(text: string): ChatLine[] {
+  const normalized = text
+    .replace(/\r\n?/g, '\n')
+    // Split list items and headings even when the model puts them on one line.
+    .replace(/\s+(?=(?:#{1,6}\s|[-*•]\s|\d+[.)]\s))/g, '\n');
+
+  return normalized.split('\n').map((rawLine) => {
+    const line = rawLine.trim();
+    if (!line) return { kind: 'paragraph', text: '' };
+
+    const heading = line.match(/^#{1,6}\s*(.*)$/);
+    if (heading) return { kind: 'heading', text: heading[1] };
+
+    const bullet = line.match(/^(?:[-*•])\s+(.*)$/);
+    if (bullet) return { kind: 'bullet', text: bullet[1] };
+
+    const number = line.match(/^(\d+[.)])\s+(.*)$/);
+    if (number) return { kind: 'number', text: `${number[1]} ${number[2]}` };
+
+    return { kind: 'paragraph', text: line };
+  });
+}
+
+function renderChatText(text: string) {
+  return text.split(/(\*\*[^*]+\*\*|__[^_]+__|(?<!\*)\*[^*]+\*(?!\*)|_[^_]+_)/g).map((part, index) => {
+    const isBold = (part.startsWith('**') && part.endsWith('**')) || (part.startsWith('__') && part.endsWith('__'));
+    const isItalic = !isBold && ((part.startsWith('*') && part.endsWith('*')) || (part.startsWith('_') && part.endsWith('_')));
+    if (isBold) return <strong key={index}>{part.slice(2, -2)}</strong>;
+    if (isItalic) return <em key={index}>{part.slice(1, -1)}</em>;
+    return part;
+  });
+}
+
 interface StopItem {
   time: string;
   mealType: string;
@@ -2490,7 +2525,19 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                       : 'bg-white text-[#2C221E] border border-[#D4B872]/30 rounded-bl-none shadow-sm'
                   }`}
                 >
-                  {msg.text}
+                  {formatChatLines(msg.text).map((line, lIdx) => {
+                    if (!line.text) return <div key={lIdx} className="h-2" aria-hidden="true" />;
+                    if (line.kind === 'heading') {
+                      return <div key={lIdx} className="font-bold text-sm mt-2 first:mt-0">{renderChatText(line.text)}</div>;
+                    }
+                    if (line.kind === 'bullet') {
+                      return <div key={lIdx} className="flex gap-1.5 pl-1"><span aria-hidden="true">•</span><span>{renderChatText(line.text)}</span></div>;
+                    }
+                    if (line.kind === 'number') {
+                      return <div key={lIdx} className="pl-1">{renderChatText(line.text)}</div>;
+                    }
+                    return <div key={lIdx}>{renderChatText(line.text)}</div>;
+                  })}
                 </div>
               </div>
             ))}
