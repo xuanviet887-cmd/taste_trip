@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { FOOD_ITEMS } from './lib/foodData';
 import type { FoodItem } from './lib/foodData';
 import { sendChatMessage, generateItinerary } from './lib/ai-api';
+import { TOUR_CONTENT_OVERRIDES } from './lib/tour-content';
 import { 
   MapPin, Utensils, Compass, Bot, Clock, Sparkles, Navigation, 
   CheckCircle, ChevronRight, ArrowLeft, Calendar, X, DollarSign, Clock3, BookOpen, Camera, Send, Globe
@@ -70,7 +71,7 @@ interface ThemeTour {
   status?: string;
 }
 
-const THEMED_TOURS: ThemeTour[] = [
+const BASE_THEMED_TOURS: ThemeTour[] = [
   // 1. Đồng bằng sông Hồng (10 Tỉnh/Thành)
   {
     id: 'hanoi',
@@ -907,6 +908,13 @@ const THEMED_TOURS: ThemeTour[] = [
   }
 ];
 
+const THEMED_TOURS: ThemeTour[] = BASE_THEMED_TOURS.map((tour) => ({
+  ...tour,
+  stops: tour.stops.map((stop, index) => ({
+    ...stop,
+    ...TOUR_CONTENT_OVERRIDES[tour.id]?.[index],
+  })),
+}));
 
 
 function getBudgetTier(budgetVal: number): 'Bình dân' | 'Đặc sản' | 'Sang trọng' {
