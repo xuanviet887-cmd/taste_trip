@@ -105,6 +105,13 @@ type ChatMessage = { role: 'user' | 'model'; text: string; partnerLinks?: ChatPa
 
 const normalizePlaceText = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
 
+const parsePriceNum = (priceStr?: string): number => {
+  if (!priceStr) return 0;
+  const firstPart = priceStr.split(/[-–]/)[0];
+  const num = parseInt(firstPart.replace(/\D/g, ''), 10);
+  return Number.isFinite(num) && num > 0 ? num : 0;
+};
+
 function resolvePartnerProvince(value: string): string | undefined {
   const normalized = normalizePlaceText(value);
   if (!normalized) return undefined;
@@ -1265,7 +1272,7 @@ export default function App() {
     setBookingError('');
     setBookingSubmitting(true);
     try {
-      const parsedFoodCost = activeTour.totalCost ? Number(activeTour.totalCost.replace(/\D/g, '')) : NaN;
+      const parsedFoodCost = activeTour.totalCost ? parsePriceNum(activeTour.totalCost) : NaN;
       const result = await createBookingRequest({
         tourId: activeTour.id,
         itineraryId: checkoutProduct === 'unlock' ? activeTour.serverItineraryId : undefined,
@@ -1585,7 +1592,7 @@ export default function App() {
       ? bookingStops.map((stop, index) => ({
         ...savedTour?.stops[index],
         ...stop,
-        priceNum: Number(String(stop.price || '').replace(/\D/g, '')) || savedTour?.stops[index]?.priceNum || 0,
+        priceNum: parsePriceNum(stop.price) || savedTour?.stops[index]?.priceNum || 0,
       } as StopItem))
       : savedTour?.stops;
     if (!stops?.length) {
@@ -1822,7 +1829,7 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
   const handleSelectThemeTour = (tour: ThemeTour) => {
     const stops = tour.stops.map((s, idx) => ({
       ...s,
-      priceNum: s.priceNum || (parseInt(s.price.replace(/\D/g, '')) || undefined),
+      priceNum: s.priceNum || parsePriceNum(s.price),
       distance: s.distance || (idx === 0 ? '0.0 km' : `${(0.8 + idx * 0.4).toFixed(1)} km`)
     }));
     const pricedStops = stops.filter((stop) => Number.isFinite(stop.priceNum) && (stop.priceNum || 0) > 0);
@@ -1887,8 +1894,8 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
   const selectedDayFirstStopIndex = activeTour.stops.findIndex((stop) => (stop.day || 1) === selectedItineraryDay);
   const selectedDayActiveStopPosition = Math.max(0, selectedDayStops.findIndex((stop) => stop === activeTour.stops[activeStopIndex]));
   const selectedDayIsLocked = false;
-  const currentDayFoodCost = selectedDayStops.reduce((sum, stop) => sum + (stop.priceNum || Number(String(stop.price || '').replace(/\D/g, '')) || 0), 0);
-  const allDaysFoodCost = activeTour.stops.reduce((sum, stop) => sum + (stop.priceNum || Number(String(stop.price || '').replace(/\D/g, '')) || 0), 0);
+  const currentDayFoodCost = selectedDayStops.reduce((sum, stop) => sum + (stop.priceNum || parsePriceNum(stop.price) || 0), 0);
+  const allDaysFoodCost = activeTour.stops.reduce((sum, stop) => sum + (stop.priceNum || parsePriceNum(stop.price) || 0), 0);
   const activeProvinceId = activeTour.partnerProvinceId
     ? (LEGACY_PROVINCE_TO_CURRENT[activeTour.partnerProvinceId] || activeTour.partnerProvinceId)
     : (PROVINCE_PARTNER_LINKS[activeTour.id] ? activeTour.id : undefined);
