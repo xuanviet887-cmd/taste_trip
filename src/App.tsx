@@ -2023,7 +2023,7 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                          Tour
                         </h4>
                         <p className="font-serif-merriweather text-xs text-[#2C221E]/70 leading-relaxed">
-                          Khám phá các hành trình ẩm thực có sẵn (Hà Nội, 63 Tỉnh Thành,...).
+                          Khám phá các hành trình ẩm thực có sẵn (Hà Nội, 34 Tỉnh Thành,...).
                         </p>
                       </div>
                       <div className="pt-2 flex items-center gap-1.5 text-[#8B0000] font-black font-sans-montserrat text-[10px] uppercase tracking-[0.2em]">
@@ -2927,9 +2927,9 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                 <section className="space-y-4 rounded-[30px] border border-[#D4B872]/40 bg-white p-6 shadow-sm" aria-labelledby="next-actions-title">
                   <h3 id="next-actions-title" className="font-serif-playfair text-2xl font-bold text-[#8B0000]">Gợi ý cho chuyến đi</h3>
                   {[
-                    { title: 'Nơi nghỉ chân', description: activeProvinceId && PARTNER_DESTINATION_NAMES[activeProvinceId] ? `Tìm chốn nghỉ thuận tiện để thong thả khám phá ${PARTNER_DESTINATION_NAMES[activeProvinceId]}.` : 'Tìm chốn nghỉ thuận tiện cho hành trình của bạn.', category: 'hotel' as const, links: activeHotelLinks, providers: ['Traveloka', 'Trip.com', 'Agoda', 'Booking.com', 'Go2Joy'], placement: 'hotel' as const },
-                    { title: 'Lên đường', description: activeProvinceId && PARTNER_DESTINATION_NAMES[activeProvinceId] ? `Chọn ${PARTNER_DESTINATION_NAMES[activeProvinceId]} làm điểm đến và ngày đi; bạn có thể bổ sung nơi khởi hành sau.` : 'Chọn điểm đến và ngày đi; nơi khởi hành có thể bổ sung sau.', category: 'transport' as const, links: activeTransportLinks, providers: ['Traveloka', 'Trip.com', 'Klook'], placement: 'transport' as const },
-                    { title: 'Khám phá cùng người bản địa', description: 'Chọn tour và hoạt động có hướng dẫn để cảm nhận thêm nét riêng của vùng đất.', category: 'tour' as const, links: activeTourLinks, providers: ['Klook'], placement: 'guided_tour' as const },
+                    { title: 'Lưu Trú', description: activeProvinceId && PARTNER_DESTINATION_NAMES[activeProvinceId] ? `Tìm chốn nghỉ thuận tiện để thong thả khám phá ${PARTNER_DESTINATION_NAMES[activeProvinceId]}.` : 'Tìm chốn nghỉ thuận tiện cho hành trình của bạn.', category: 'hotel' as const, links: activeHotelLinks, providers: ['Traveloka', 'Trip.com', 'Agoda', 'Booking.com', 'Go2Joy'], placement: 'hotel' as const },
+                    { title: 'Di Chuyển', description: activeProvinceId && PARTNER_DESTINATION_NAMES[activeProvinceId] ? `Chọn ${PARTNER_DESTINATION_NAMES[activeProvinceId]} làm điểm đến và ngày đi; bạn có thể bổ sung nơi khởi hành sau.` : 'Chọn điểm đến và ngày đi; nơi khởi hành có thể bổ sung sau.', category: 'transport' as const, links: activeTransportLinks, providers: ['Traveloka', 'Trip.com', 'Klook'], placement: 'transport' as const },
+                    { title: 'Khám Phá Cùng Người Bản Địa', description: 'Chọn tour và hoạt động có hướng dẫn để cảm nhận thêm nét riêng của vùng đất.', category: 'tour' as const, links: activeTourLinks, providers: ['Klook'], placement: 'guided_tour' as const },
                   ].map((group) => <article key={group.title} className="rounded-2xl border border-[#D4B872]/30 bg-[#FAF6EE] p-4">
                     <h4 className="font-serif-playfair text-lg font-bold text-[#8B0000]">{group.title}</h4>
                     <p className="mt-1 text-xs text-[#2C221E]/70">{group.description}</p>
