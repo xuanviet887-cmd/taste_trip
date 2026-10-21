@@ -2,27 +2,134 @@
 
 @layer base {
   :root {
-    --gold: #D4B872;
-    --gold-hover: #C2A55F;
-    --lacquer: #8B0000;
-    --lacquer-light: #A52A2A;
-    --dzo: #FAF6EE;
-    --bamboo: #1E5631;
-    --bamboo-light: #2E8B57;
+    --gold: #C59B4B;
+    --gold-light: #E0BA6A;
+    --gold-hover: #AF8437;
+    --lacquer: #8B1E1E;
+    --lacquer-dark: #6D1414;
+    --lacquer-light: #A82C2C;
+    --dzo: #FAF7F2;
+    --bamboo: #1C4329;
+    --bamboo-light: #285E3A;
+    --ink: #2C221E;
+    --ink-muted: #6B5E57;
   }
 }
 
-/* Font Families */
-.font-serif-playfair { font-family: 'Playfair Display', serif; }
-.font-serif-lora { font-family: 'Lora', serif; }
-.font-serif-merriweather { font-family: 'Merriweather', serif; }
-.font-sans-montserrat { font-family: 'Montserrat', sans-serif; }
-.font-sans-oswald { font-family: 'Oswald', sans-serif; }
-.font-sans-poppins { font-family: 'Poppins', sans-serif; }
-.font-script-dancing { font-family: 'Dancing Script', cursive; }
-.font-sans-inter { font-family: 'Inter', sans-serif; }
+/* --- REFINED TYPOGRAPHY (2 Harmonious Font Families) --- */
+/* Display / Headings: Editorial Vietnamese Heritage */
+.font-serif-playfair,
+.font-serif-lora,
+.font-serif-merriweather { 
+  font-family: 'Playfair Display', Georgia, serif; 
+  font-feature-settings: 'kern' 1, 'liga' 1;
+}
 
-/* --- WIX VIEW TRANSITIONS API --- */
+/* UI, Body & Navigation: Modern Geometric Sans with pristine Vietnamese diacritics */
+.font-sans,
+.font-sans-montserrat,
+.font-sans-poppins,
+.font-sans-inter,
+.font-sans-oswald { 
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+  font-feature-settings: 'cv02' 1, 'cv03' 1, 'cv04' 1;
+}
+
+.font-script-dancing { 
+  font-family: 'Cormorant Garamond', 'Playfair Display', Georgia, serif;
+  font-style: italic;
+}
+
+/* Fluid Typography Helpers */
+.text-fluid-hero {
+  font-size: clamp(2.5rem, 5.5vw + 0.5rem, 5.25rem);
+  line-height: 1.02;
+  letter-spacing: -0.025em;
+}
+
+.text-fluid-h2 {
+  font-size: clamp(1.85rem, 3.2vw + 0.25rem, 3rem);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+/* --- HERO DISPLAY TYPE (uppercase heritage editorial treatment) --- */
+.hero-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 900;
+  font-size: clamp(1.75rem, 4.1vw, 3.9rem);
+  line-height: .94;
+  text-transform: uppercase;
+  text-wrap: balance;
+  /* Airy caps need wider tracking to stay legible */
+  letter-spacing: .045em;
+}
+
+/* Line 1 — ink, full uppercase, slightly tighter to read as a masthead */
+.hero-title-line {
+  display: block;
+  color: #2C221E;
+  letter-spacing: .02em;
+}
+
+/* Line 2 — lacquer seal line: uppercase small-caps feel via size + tracking */
+.hero-title-accent {
+  position: relative;
+  display: inline-block;
+  color: var(--lacquer);
+  font-size: .58em;
+  font-weight: 700;
+  letter-spacing: .18em;
+  line-height: 1.15;
+  margin-top: .28em;
+  padding-right: .18em;
+}
+
+/* Hand-inked gold underline that sits *under* the caps, never through them */
+.hero-title-accent::after {
+  content: '';
+  position: absolute;
+  left: -.08em;
+  right: 0;
+  bottom: -.18em;
+  height: .22em;
+  background: linear-gradient(90deg, rgba(197,155,75,.75), rgba(197,155,75,.15));
+  border-radius: 999px;
+  transform: rotate(-1.2deg) skewX(-14deg);
+  z-index: -1;
+}
+
+/* Hairline rule + label used beside the hero title for editorial rhythm */
+.hero-title-rule {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  margin-top: 1.1rem;
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  font-size: .62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .34em;
+  color: rgba(44, 34, 30, .55);
+}
+
+.hero-title-rule::before {
+  content: '';
+  width: 2.5rem;
+  height: 1px;
+  background: var(--gold);
+  flex: none;
+}
+
+/* Small display accent used inside body copy and badges */
+.text-accent-italic {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: italic;
+  font-weight: 600;
+  color: var(--lacquer);
+}
+
+/* --- VIEW TRANSITIONS API --- */
 @view-transition {
   navigation: auto;
 }
@@ -32,15 +139,15 @@
 }
 
 ::view-transition-new(root) {
-  animation: 0.35s cubic-bezier(0.64, 0, 0.78, 0) 0.35s backwards fade-in;
+  animation: 0.35s cubic-bezier(0.22, 1, 0.36, 1) 0.1s backwards fade-in;
 }
 
 @keyframes fade-out {
-  to { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 0; transform: translateY(-6px); }
 }
 
 @keyframes fade-in {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(6px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -51,33 +158,65 @@
   }
 }
 
-/* Keyframes */
+/* --- MOTION & EASING (Editorial & Natural) --- */
 @keyframes motion-fadeIn {
   0% { opacity: 0; }
   100% { opacity: 1; }
 }
+
 @keyframes motion-floatIn {
-  0% { opacity: 0; transform: translateY(40px); }
+  0% { opacity: 0; transform: translateY(24px); }
   100% { opacity: 1; transform: translateY(0); }
 }
-@keyframes motion-flip-1 {
-  0% { transform: perspective(800px) rotate3d(0, 1, 0, 0deg); }
-  100% { transform: perspective(800px) rotate3d(0, 1, 0, 360deg); }
+
+@keyframes motion-slideIn {
+  0% { opacity: 0; transform: translateX(-16px); }
+  100% { opacity: 1; transform: translateX(0); }
 }
 
-.animate-motion-fadeIn { animation: motion-fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-.animate-motion-floatIn { animation: motion-floatIn 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-.animate-motion-flip { animation: motion-flip-1 3s infinite linear; }
-
-/* Interactive & Visual Effects */
-.hover-box-blend {
-  mix-blend-mode: plus-lighter;
-  transition: opacity 0.5s ease;
+.animate-motion-fadeIn { 
+  animation: motion-fadeIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards; 
 }
 
+.animate-motion-floatIn { 
+  animation: motion-floatIn 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards; 
+}
+
+.animate-motion-slideIn { 
+  animation: motion-slideIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards; 
+}
+
+/* --- MODERN SHADOWS & GLASSMORPHISM --- */
+.shadow-editorial {
+  box-shadow: 0 4px 20px -2px rgba(44, 34, 30, 0.05), 0 2px 6px -1px rgba(44, 34, 30, 0.03);
+}
+
+.shadow-editorial-lg {
+  box-shadow: 0 16px 40px -8px rgba(44, 34, 30, 0.08), 0 6px 16px -2px rgba(44, 34, 30, 0.04);
+}
+
+.shadow-editorial-hover {
+  box-shadow: 0 24px 50px -12px rgba(139, 30, 30, 0.12), 0 8px 20px -4px rgba(44, 34, 30, 0.05);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(197, 155, 75, 0.22);
+}
+
+.glass-card-dark {
+  background: rgba(44, 34, 30, 0.72);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+/* Accessible Focus States */
 .focus-ring-accessible:focus-visible {
   outline: none;
-  box-shadow: inset 0 0 1px 1px #3899ec, inset 0 0 0 2px hsla(0,0%,100%,.9), 0 0 0 4px rgba(56, 153, 236, 0.4);
+  box-shadow: 0 0 0 2px #FAF7F2, 0 0 0 4px #C59B4B, 0 0 12px rgba(197, 155, 75, 0.35);
 }
 
 /* Text Marquee */
@@ -85,23 +224,42 @@
   0% { transform: translateX(0%); }
   100% { transform: translateX(-50%); }
 }
+
 .animate-marquee {
   display: flex;
   width: 200%;
-  animation: marquee 25s linear infinite;
+  animation: marquee 32s linear infinite;
 }
 
-/* Custom Background */
+@media (prefers-reduced-motion: reduce) {
+  .animate-marquee {
+    animation: none;
+  }
+}
+
+/* Custom Background with high-contrast legibility */
 .bg-bamboo-watermark {
-  background-color: #1a2e1a;
-  background-image: linear-gradient(rgba(250, 246, 238, 0.88), rgba(250, 246, 238, 0.88)), url('/picture/f2f0278b13a0c88a014a26e41edc504d.jpg');
+  background-color: #FAF7F2;
+  background-image: linear-gradient(rgba(250, 247, 242, 0.93), rgba(250, 247, 242, 0.93)), url('/picture/f2f0278b13a0c88a014a26e41edc504d.jpg');
   background-size: cover;
   background-position: center;
   background-attachment: fixed;
 }
 
 /* Custom Scrollbar */
-::-webkit-scrollbar { width: 8px; }
-::-webkit-scrollbar-track { background: #FAF6EE; }
-::-webkit-scrollbar-thumb { background: #D4B872; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #C2A55F; }
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: #FAF7F2; }
+::-webkit-scrollbar-thumb { background: #C59B4B; border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: #AF8437; }
+
+@media print {
+  @page { margin: 14mm; }
+  body { background: white !important; color: #2C221E !important; }
+  body * { visibility: hidden !important; }
+  main, main * { visibility: visible !important; }
+  header, footer, .print-hidden, .fixed, .bg-bamboo-watermark { display: none !important; }
+  main { position: absolute !important; inset: 0 !important; width: 100% !important; }
+  main > div { max-width: none !important; padding: 0 !important; }
+  main article, main section, main [class*="bg-white"] { break-inside: avoid; box-shadow: none !important; }
+  h2, h3, h4 { color: #8B1E1E !important; }
+}

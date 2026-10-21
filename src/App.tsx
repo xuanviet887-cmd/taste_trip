@@ -1,14 +1,35 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { FOOD_ITEMS } from './lib/foodData';
 import type { FoodItem } from './lib/foodData';
-import { sendChatMessage, generateItinerary } from './lib/ai-api';
+import { sendChatMessage, generateItinerary, createBookingRequest, getAdminBookings, updateAdminBooking, lookupCustomerBooking, findCustomerBookingsByPhone, reportCustomerPayment, getPartnerVouchers, getAdminVouchers, getAdminDatabaseOverview, getAdminAffiliateClickReport, logAffiliateClick, createSharedItinerary, getSharedItinerary, createAdminVoucher, setAdminVoucherActive } from './lib/ai-api';
+import type { AdminDatabaseOverview, AffiliateClickReportRow, BookingRecord, BookingStatus, CustomerBookingSummary, CustomerBookingView, PartnerVoucher, PartnerVoucherInput, SharedItinerary } from './lib/ai-api';
+import { getPartnerCategoryUrl, isActiveAffiliateLink, PARTNER_DESTINATION_NAMES, PARTNER_PUBLIC_WEBSITES, PROVINCE_PARTNER_LINKS } from './data/partner-links';
+import type { AffiliateLink } from './data/partner-links';
+import { CURRENT_PROVINCES, LEGACY_PROVINCE_TO_CURRENT } from './data/provinces';
 import { TOUR_CONTENT_OVERRIDES } from './lib/tour-content';
 import { 
-  MapPin, Utensils, Compass, Bot, Clock, Sparkles, Navigation, 
-  CheckCircle, ChevronRight, ArrowLeft, Calendar, X, DollarSign, Clock3, BookOpen, Camera, Send, Globe
+  MapPin, Utensils, Bot, Clock, Sparkles, Navigation, 
+  CheckCircle, ChevronRight, ArrowLeft, X, DollarSign, Clock3, BookOpen, Camera, Send, Globe,
+  Bookmark, Share2, Printer, MapPinned, Compass
 } from 'lucide-react';
 
 type ChatLine = { kind: 'heading' | 'bullet' | 'number' | 'paragraph'; text: string };
+
+const PENDING_BOOKING_STORAGE_KEY = 'tastetrip_pending_booking_v1';
+
+function readPendingBookingRecovery(): { booking: CustomerBookingView; phone: string; savedAt: number } | null {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(PENDING_BOOKING_STORAGE_KEY) || 'null');
+    if (!saved?.booking?.id || typeof saved.phone !== 'string' || Date.now() - saved.savedAt > 30 * 60 * 1000
+      || saved.booking.paymentStatus === 'refunded') {
+      sessionStorage.removeItem(PENDING_BOOKING_STORAGE_KEY);
+      return null;
+    }
+    return saved as { booking: CustomerBookingView; phone: string; savedAt: number };
+  } catch {
+    return null;
+  }
+}
 
 function formatChatLines(text: string): ChatLine[] {
   const normalized = text
@@ -44,6 +65,7 @@ function renderChatText(text: string) {
 }
 
 interface StopItem {
+  day?: number;
   time: string;
   mealType: string;
   name: string;
@@ -61,6 +83,8 @@ interface StopItem {
 
 interface ThemeTour {
   id: string;
+  dayCount?: number;
+  serverItineraryId?: string;
   title: string;
   desc: string;
   image: string;
@@ -69,6 +93,47 @@ interface ThemeTour {
   totalDistance?: string;
   totalCost?: string;
   status?: string;
+  partnerProvinceId?: string;
+  savedId?: string;
+  foodCostKnownVnd?: number;
+  foodCostPricedStops?: number;
+}
+
+type PartnerPlacement = 'primary_tour' | 'hotel' | 'transport' | 'guided_tour' | 'assistant_chat';
+type ChatPartnerLink = AffiliateLink & { provinceId: string; placement: PartnerPlacement };
+type ChatMessage = { role: 'user' | 'model'; text: string; partnerLinks?: ChatPartnerLink[] };
+
+const normalizePlaceText = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+
+function resolvePartnerProvince(value: string): string | undefined {
+  const normalized = normalizePlaceText(value);
+  if (!normalized) return undefined;
+  const aliases: Record<string, string[]> = {
+    tphcm: ['sai gon', 'tp hcm', 'hcm', 'ho chi minh', 'thanh pho ho chi minh'],
+  };
+  const aliasMatch = Object.entries(aliases).find(([, names]) => names.some((name) => normalized.includes(name)));
+  if (aliasMatch) return aliasMatch[0];
+  const provinceNameMatch = CURRENT_PROVINCES
+    .flatMap((province) => [province.name, ...province.legacyNames].map((name) => ({ id: province.id, name: normalizePlaceText(name) })))
+    .sort((a, b) => b.name.length - a.name.length)
+    .find(({ name }) => name.length >= 4 && normalized.includes(name));
+  if (provinceNameMatch) return provinceNameMatch.id;
+  const idMatch = Object.keys(LEGACY_PROVINCE_TO_CURRENT).sort((a, b) => b.length - a.length)
+    .find((id) => normalized.includes(normalizePlaceText(id)));
+  if (idMatch) return LEGACY_PROVINCE_TO_CURRENT[idMatch];
+  const match = THEMED_TOURS.find((tour) => {
+    const title = normalizePlaceText(tour.title);
+    const candidates = [title, title.replace(/tron ven|trong ngay|food ?tour/g, '').trim()];
+    return candidates.some((candidate) => candidate.length >= 4 && normalized.includes(candidate));
+  });
+  return match?.id;
+}
+
+function readSharedHash() {
+  const hash = window.location.hash;
+  if (hash.startsWith('#tour=')) return { kind: 'tour' as const, id: decodeURIComponent(hash.slice(6)) };
+  if (hash.startsWith('#shared=')) return { kind: 'shared' as const, id: decodeURIComponent(hash.slice(8)) };
+  return null;
 }
 
 const BASE_THEMED_TOURS: ThemeTour[] = [
@@ -357,7 +422,7 @@ const BASE_THEMED_TOURS: ThemeTour[] = [
     image: '/picture/provinces/lai-chau.jpg',
     region: 'Tây Bắc Bộ',
     stops: [
-      { time: '08:00', mealType: 'Sáng', name: 'Bún tôm', address: 'TP. Lai Châu', image: '/picture/provinces/lai-chau.jpg', price: '40.000đ', priceNum: 40000, category: 'Bình dân', cultureStory: 'Bún tôm đậm đà hương vị miền núi phía Bắc.', tastingTip: 'Thêm rau thơm.', englishMenu: 'Northern Style Shrimp Vermicelli.', distance: '0.0 km' },
+      { time: '08:00', mealType: 'Sáng', name: 'Bún tôm', address: 'Chợ San Thàng, Phường Tân Phong (ngay mặt đường QL4D), TP. Lai Châu.', image: '/picture/provinces/lai-chau.jpg', price: '40.000đ', priceNum: 40000, category: 'Bình dân', cultureStory: 'Bún tôm Lai Châu là nét chấm phá ẩm thực độc đáo vùng cao Tây Bắc, thể hiện sự giao thoa giữa sản vật tôm suối tự nhiên ngọt thanh và các gia vị đại ngàn như mắc khén, hạt dổi. Món ăn chứa đựng triết lý cân bằng âm dương giúp làm ấm cơ thể trong khí hậu se lạnh, đồng thời gắn liền với nét đẹp đời sống sinh hoạt nơi chợ phiên vùng cao.', tastingTip: 'Húp thử ngụm nước dùng ngọt thanh nguyên bản trước khi trộn đều, sau đó ăn kèm các loại rau rừng tươi như rau dớn hay hoa chuối thái mỏng. Hãy chấm tôm suối cùng muối giã mắc khén ớt nướng và thêm chút măng chua ngâm tỏi ớt để món ăn bùng nổ hương vị chua cay tê nhẹ chuẩn nét Tây Bắc.', englishMenu: 'Northern Style Shrimp Vermicelli.', distance: '0.0 km' },
       { time: '12:00', mealType: 'Trưa', name: 'Cá nướng Pa pỉnh tộp', address: 'Than Uyên, Lai Châu', image: '/picture/provinces/lai-chau.jpg', price: '120.000đ', priceNum: 120000, category: 'Đặc sản', cultureStory: 'Cá suối nhồi mắc khén, sả, rau thơm gấp đôi nướng than hồng.', tastingTip: 'Gỡ thịt cá chấm gia vị nhồi bên trong.', englishMenu: 'Pa Pinh Top Grilled Stream Fish.', distance: '1.4 km' },
       { time: '15:30', mealType: 'Chiều', name: 'Lạp xưởng gác bếp', address: 'Phong Thổ, Lai Châu', image: '/picture/provinces/lai-chau.jpg', price: '50.000đ', priceNum: 50000, category: 'Ăn vặt', cultureStory: 'Lạp xưởng hun khói bếp củi thơm mùi gia vị gác bếp.', tastingTip: 'Thái lát mỏng hấp hoặc nướng.', englishMenu: 'Smoked Kitchen Sausage.', distance: '0.9 km' },
       { time: '19:00', mealType: 'Tối', name: 'Lẩu cá lăng', address: 'TP. Lai Châu', image: '/picture/provinces/lai-chau.jpg', price: '180.000đ', priceNum: 180000, category: 'Sang trọng', cultureStory: 'Lẩu cá lăng sông Đà chua thanh đậm đà.', tastingTip: 'Nhúng rau dọc mùng và hoa chuối.', englishMenu: 'Catfish Hotpot.', distance: '1.6 km' }
@@ -666,7 +731,7 @@ const BASE_THEMED_TOURS: ThemeTour[] = [
     stops: [
       { time: '08:00', mealType: 'Sáng', name: 'Bánh canh Long Hương', address: 'Bà Rịa, Vũng Tàu', image: '/picture/provinces/ba-ria-vung-tau.jpg', price: '45.000đ', priceNum: 45000, category: 'Bình dân', cultureStory: 'Bánh canh giò heo sợi dai mềm nước dùng hầm xương đậm đà.', tastingTip: 'Thêm giá đỗ và hành ngò.', englishMenu: 'Long Huong Rice Noodle Soup.', distance: '0.0 km' },
       { time: '12:00', mealType: 'Trưa', name: 'Lẩu súng Phước Hải', address: 'Phước Hải, Vũng Tàu', image: '/picture/provinces/ba-ria-vung-tau.jpg', price: '180.000đ', priceNum: 180000, category: 'Đặc sản', cultureStory: 'Lẩu hải sản nấu bông súng giòn sần sật chua thanh.', tastingTip: 'Nhúng bông súng vào nước lẩu sôi.', englishMenu: 'Phuoc Hai Water Lily Seafood Hotpot.', distance: '2.0 km' },
-      { time: '15:30', mealType: 'Chiều', name: 'Bánh khọt', address: 'Đường Nguyễn Trường Tộ, Vũng Tàu', image: '/picture/provinces/ba-ria-vung-tau.jpg', price: '50.000đ', priceNum: 50000, category: 'Ăn vặt', cultureStory: 'Bánh khọt tôm tươi giòn rụm đổ khuôn dầu ăn kèm rau sống mỡ hành.', tastingTip: 'Cuốn bánh khọt với rau cải xanh và chấm nước mắm ngọt.', englishMenu: 'Vung Tau Mini Crispy Shrimp Pancakes.', distance: '1.2 km' },
+      { time: '15:30', mealType: 'Chiều', name: 'Bánh khọt - Cô Hai Thảo', address: 'Đường Nguyễn Trường Tộ, Vũng Tàu', image: '/picture/provinces/ba-ria-vung-tau.jpg', price: '50.000đ', priceNum: 50000, category: 'Ăn vặt', cultureStory: 'Bánh khọt tôm tươi giòn rụm đổ khuôn dầu ăn kèm rau sống mỡ hành.', tastingTip: 'Cuốn bánh khọt với rau cải xanh và chấm nước mắm ngọt.', englishMenu: 'Vung Tau Mini Crispy Shrimp Pancakes.', distance: '1.2 km' },
       { time: '19:00', mealType: 'Tối', name: 'Gỏi cá mai, hải sản', address: 'Bãi Trước, Vũng Tàu', image: '/picture/provinces/ba-ria-vung-tau.jpg', price: '220.000đ', priceNum: 220000, category: 'Sang trọng', cultureStory: 'Gỏi cá mai trộn thính thơm ngậy chấm nước sốt đậu phộng.', tastingTip: 'Cuốn bánh tráng với rau thơm và khế chua.', englishMenu: 'Fresh Anchovy Salad & Seafood.', distance: '1.8 km' }
     ]
   },
@@ -908,13 +973,22 @@ const BASE_THEMED_TOURS: ThemeTour[] = [
   }
 ];
 
-const THEMED_TOURS: ThemeTour[] = BASE_THEMED_TOURS.map((tour) => ({
-  ...tour,
-  stops: tour.stops.map((stop, index) => ({
-    ...stop,
-    ...TOUR_CONTENT_OVERRIDES[tour.id]?.[index],
-  })),
-}));
+const LEGACY_THEMED_TOURS = new Map(BASE_THEMED_TOURS.map((tour) => [tour.id, tour]));
+const THEMED_TOURS: ThemeTour[] = CURRENT_PROVINCES.flatMap((province) => {
+  const sourceTour = LEGACY_THEMED_TOURS.get(province.sourceTourId);
+  if (!sourceTour) return [];
+  const merged = province.id !== province.sourceTourId;
+  return [{
+    ...sourceTour,
+    id: province.id,
+    title: merged ? `${province.name} - ${province.itineraryCenter} Food Tour` : sourceTour.title,
+    desc: merged ? `Lịch trình mẫu tại ${province.itineraryCenter}. ${sourceTour.desc}` : sourceTour.desc,
+    stops: sourceTour.stops.map((stop, index) => ({
+      ...stop,
+      ...TOUR_CONTENT_OVERRIDES[sourceTour.id]?.[index],
+    })),
+  }];
+});
 
 
 function getBudgetTier(budgetVal: number): 'Bình dân' | 'Đặc sản' | 'Sang trọng' {
@@ -1062,12 +1136,48 @@ function buildCustomTourStops(
 }
 
 export default function App() {
+  const initialSharedHash = readSharedHash();
+  const initialLinkedTour = initialSharedHash?.kind === 'tour'
+    ? THEMED_TOURS.find((tour) => tour.id === (LEGACY_PROVINCE_TO_CURRENT[initialSharedHash.id] || initialSharedHash.id))
+    : undefined;
+  const [pendingBookingRecovery, setPendingBookingRecovery] = useState(readPendingBookingRecovery);
   const [step, setStep] = useState<
-    'start' | 'get-loc' | 'main-menu' | 'custom-tour' | 'themed-tour' | 'ai-chat' | 'render-details' | 'checkout' | 'reservation' | 'finish'
-  >('start');
+    'start' | 'main-menu' | 'custom-tour' | 'themed-tour' | 'ai-chat' | 'render-details' | 'checkout' | 'payment' | 'admin'
+  >(() => pendingBookingRecovery ? 'checkout' : window.location.hash === '#admin' ? 'admin' : initialLinkedTour ? 'render-details' : 'start');
 
-  const [reservationState, setReservationState] = useState<'none' | 'held' | 'paid' | 'cancelled'>('none');
-  const [holdTimestamp, setHoldTimestamp] = useState<number | null>(null);
+  const [bookingDate, setBookingDate] = useState(() => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date()));
+  const [bookingGuests, setBookingGuests] = useState(1);
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [bookingError, setBookingError] = useState('');
+  const [bookingRecoveryNotice, setBookingRecoveryNotice] = useState('');
+  const bookingErrorRef = useRef<HTMLParagraphElement>(null);
+  const bookingPaymentRef = useRef<HTMLElement>(null);
+  const [bookingSubmitting, setBookingSubmitting] = useState(false);
+  const bookingSubmitLockRef = useRef(false);
+  const [paymentLookupId, setPaymentLookupId] = useState(pendingBookingRecovery?.booking.id || '');
+  const [paymentLookupPhone, setPaymentLookupPhone] = useState(pendingBookingRecovery?.phone || '');
+  const [customerBookingMatches, setCustomerBookingMatches] = useState<CustomerBookingSummary[]>([]);
+  const [customerBooking, setCustomerBooking] = useState<CustomerBookingView | null>(pendingBookingRecovery?.booking || null);
+  const [paidBookingConfirmation, setPaidBookingConfirmation] = useState<CustomerBookingView | null>(null);
+  const [paymentLookupError, setPaymentLookupError] = useState('');
+  const [paymentLookupLoading, setPaymentLookupLoading] = useState(false);
+  const [adminToken, setAdminToken] = useState('');
+  const [adminBookings, setAdminBookings] = useState<BookingRecord[]>([]);
+  const [adminLoggedIn, setAdminLoggedIn] = useState(false);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminError, setAdminError] = useState('');
+  const [adminNotice, setAdminNotice] = useState('');
+  const [adminVouchers, setAdminVouchers] = useState<PartnerVoucher[]>([]);
+  const [adminDatabaseOverview, setAdminDatabaseOverview] = useState<AdminDatabaseOverview | null>(null);
+  const [affiliateClickReport, setAffiliateClickReport] = useState<AffiliateClickReportRow[]>([]);
+  const [partnerVouchers, setPartnerVouchers] = useState<PartnerVoucher[]>([]);
+  const [voucherNotice, setVoucherNotice] = useState('');
+  const [voucherSubmitting, setVoucherSubmitting] = useState(false);
+  const [voucherDraft, setVoucherDraft] = useState<PartnerVoucherInput>(() => {
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date());
+    return { tourId: '*', stopIndex: null, restaurantName: '', title: '', benefit: '', code: '', terms: '', validFrom: today, validTo: today };
+  });
   const [selectedFoodModal, setSelectedFoodModal] = useState<{
     name: string;
     tag: string;
@@ -1079,11 +1189,290 @@ export default function App() {
     tagColor?: string;
   } | null>(null);
   const [isChatPopupOpen, setIsChatPopupOpen] = useState(false);
+  const [savedTourIds, setSavedTourIds] = useState<string[]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('tastetrip_saved_tours') || '[]');
+      const currentIds = new Set(CURRENT_PROVINCES.map((province) => province.id));
+      return Array.isArray(saved)
+        ? [...new Set(saved.filter((id): id is string => typeof id === 'string').map((id) => LEGACY_PROVINCE_TO_CURRENT[id] || id).filter((id) => currentIds.has(id)))]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+  const [savedCustomTours, setSavedCustomTours] = useState<ThemeTour[]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('tastetrip_saved_ai_itineraries_v1') || '[]');
+      return Array.isArray(saved) ? saved.filter((tour) => tour && typeof tour.savedId === 'string' && Array.isArray(tour.stops)) : [];
+    } catch { return []; }
+  });
+  const [showSavedTours, setShowSavedTours] = useState(false);
+  const [tourActionNotice, setTourActionNotice] = useState('');
+  const [shareLoading, setShareLoading] = useState(false);
+  const [sharedItineraryLoading, setSharedItineraryLoading] = useState(false);
 
-  const handleHoldTour = () => {
-    setReservationState('held');
-    setHoldTimestamp(Date.now());
-    changeStep('reservation');
+  useEffect(() => {
+    try {
+      localStorage.setItem('tastetrip_saved_tours', JSON.stringify(savedTourIds));
+    } catch {
+      setTourActionNotice('Trình duyệt không cho phép lưu tour trên thiết bị này.');
+    }
+  }, [savedTourIds]);
+
+  useEffect(() => {
+    try { localStorage.setItem('tastetrip_saved_ai_itineraries_v1', JSON.stringify(savedCustomTours)); }
+    catch { setTourActionNotice('Trình duyệt không cho phép lưu lịch trình trên thiết bị này.'); }
+  }, [savedCustomTours]);
+
+  const toggleSavedTour = (tourId: string) => {
+    setSavedTourIds((current) => current.includes(tourId)
+      ? current.filter((id) => id !== tourId)
+      : [...current, tourId]);
+  };
+
+  const getFullRouteUrl = (tour: ThemeTour) => {
+    const places = tour.stops.map((stop) => `${stop.name} ${stop.address}`);
+    const destination = places.pop() || tour.title;
+    const waypoints = places.length ? `&waypoints=${encodeURIComponent(places.join('|'))}` : '';
+    return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}${waypoints}&travelmode=walking`;
+  };
+
+  const shareActiveTour = async () => {
+    setShareLoading(true);
+    try {
+      let shareHash: string;
+      if (activeTour.id === 'custom-tour-result') {
+        const { shareId } = await createSharedItinerary({ ...activeTour } as SharedItinerary);
+        shareHash = `#shared=${shareId}`;
+      } else shareHash = `#tour=${encodeURIComponent(activeTour.id)}`;
+      const shareUrl = `${window.location.origin}${window.location.pathname}${shareHash}`;
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        setTourActionNotice('Đã sao chép liên kết mở lịch trình này.');
+      } catch {
+        if (navigator.share) await navigator.share({ title: activeTour.title, url: shareUrl });
+        else throw new Error('clipboard-unavailable');
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name !== 'AbortError') setTourActionNotice('Chưa tạo được liên kết chia sẻ. Hãy kiểm tra kết nối server rồi thử lại.');
+    } finally { setShareLoading(false); }
+  };
+
+  const handleBookingSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (bookingSubmitLockRef.current) return;
+    bookingSubmitLockRef.current = true;
+    setBookingError('');
+    setBookingSubmitting(true);
+    try {
+      const parsedFoodCost = activeTour.totalCost ? Number(activeTour.totalCost.replace(/\D/g, '')) : NaN;
+      const result = await createBookingRequest({
+        tourId: activeTour.id,
+        itineraryId: checkoutProduct === 'unlock' ? activeTour.serverItineraryId : undefined,
+        tourTitle: checkoutProduct === 'unlock'
+          ? `Mở khóa lịch trình: ${activeTour.title}`.slice(0, 180)
+          : checkoutProduct === 'buddy'
+            ? `Yêu cầu Local Buddy: ${activeTour.title}`.slice(0, 180)
+            : activeTour.title,
+        kind: checkoutProduct === 'buddy' ? 'guided' : 'self-guided',
+        date: bookingDate,
+        guests: checkoutProduct === 'unlock' || checkoutProduct === 'buddy' ? 1 : bookingGuests,
+        customerName,
+        phone: customerPhone,
+        email: '',
+        notes: checkoutProduct === 'unlock'
+          ? 'Thanh toán mở khóa toàn bộ lịch trình nhiều ngày TasteTrip.'
+          : checkoutProduct === 'buddy'
+            ? 'Khách muốn Local Buddy đồng hành Ngày 1. Mức tham khảo 150.000đ/buổi; cần TasteTrip xác nhận người dẫn và báo giá trước thanh toán.'
+            : '',
+        estimatedFoodCostPerPerson: Number.isFinite(parsedFoodCost)
+          ? checkoutProduct === 'unlock' ? 49000 : parsedFoodCost
+          : activeTour.stops.reduce((sum, stop) => sum + (stop.priceNum || 0), 0),
+        itinerary: checkoutProduct === 'unlock' ? [] : activeTour.stops.map(({ day, time, mealType, name, address, image, price, category, cultureStory, tastingTip, englishMenu, distance }) => ({
+          day, time, mealType, name, address, image, price, category, cultureStory, tastingTip, englishMenu, distance,
+        })),
+      });
+      setPaymentLookupId(result.bookingId);
+      setPaymentLookupPhone(customerPhone);
+      setCustomerBooking(result.booking);
+      setSelectedItineraryDay(1);
+      const recovery = { booking: result.booking, phone: customerPhone, savedAt: Date.now() };
+      try {
+        sessionStorage.setItem(PENDING_BOOKING_STORAGE_KEY, JSON.stringify(recovery));
+        setPendingBookingRecovery(recovery);
+      } catch {
+        // The in-memory QR remains available when session storage is disabled.
+      }
+      setBookingRecoveryNotice(result.reused
+        ? checkoutProduct === 'buddy'
+          ? 'Đã tìm thấy yêu cầu Local Buddy trước đó. Mình đã mở lại mã đơn để tránh gửi trùng.'
+          : 'Đã tìm thấy yêu cầu giống hệt đang chờ thanh toán. Mình đã mở lại mã đơn và QR cũ để tránh tạo thêm đơn trùng.'
+        : checkoutProduct === 'buddy'
+          ? 'Đã gửi yêu cầu Local Buddy. TasteTrip sẽ xác nhận người dẫn và báo giá trước khi bạn thanh toán.'
+          : 'Đơn đã được tạo. Giữ trang này mở để hoàn tất thanh toán.');
+      setStep('checkout');
+    } catch (error) {
+      setBookingError(error instanceof Error ? error.message : 'Không gửi được yêu cầu đặt tour.');
+      requestAnimationFrame(() => bookingErrorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+    } finally {
+      bookingSubmitLockRef.current = false;
+      setBookingSubmitting(false);
+    }
+  };
+
+  const handleCustomerBookingLookup = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (paymentLookupLoading) return;
+    setPaymentLookupLoading(true);
+    setPaymentLookupError('');
+    setCustomerBooking(null);
+    setCustomerBookingMatches([]);
+    try {
+      const result = await findCustomerBookingsByPhone(paymentLookupPhone.trim());
+      if (result.bookings.length === 0) {
+        setPaymentLookupError('Không tìm thấy đơn nào với số điện thoại này. Hãy kiểm tra số đã dùng khi đặt tour.');
+      } else if (result.bookings.length === 1) {
+        const match = result.bookings[0];
+        setCustomerBookingMatches(result.bookings);
+        setPaymentLookupId(match.id);
+        const bookingResult = await lookupCustomerBooking(match.id, paymentLookupPhone.trim());
+        setCustomerBooking(bookingResult.booking);
+      } else {
+        setCustomerBookingMatches(result.bookings);
+      }
+    } catch (error) {
+      setPaymentLookupError(error instanceof Error ? error.message : 'Không tra cứu được đơn hàng.');
+    } finally {
+      setPaymentLookupLoading(false);
+    }
+  };
+
+  const handleSelectCustomerBooking = async (booking: CustomerBookingSummary) => {
+    if (paymentLookupLoading) return;
+    setPaymentLookupLoading(true);
+    setPaymentLookupError('');
+    try {
+      const result = await lookupCustomerBooking(booking.id, paymentLookupPhone.trim());
+      setPaymentLookupId(booking.id);
+      setCustomerBooking(result.booking);
+    } catch (error) {
+      setPaymentLookupError(error instanceof Error ? error.message : 'Không mở được thông tin đơn hàng.');
+    } finally {
+      setPaymentLookupLoading(false);
+    }
+  };
+
+  const handleCustomerPaymentReport = async () => {
+    if (paymentLookupLoading) return;
+    setPaymentLookupLoading(true);
+    setPaymentLookupError('');
+    try {
+      const result = await reportCustomerPayment(paymentLookupId.trim(), paymentLookupPhone.trim());
+      setCustomerBooking(result.booking);
+      if (result.booking.paymentStatus === 'paid') {
+        openPaidBookingItinerary(result.booking);
+      }
+    } catch (error) {
+      setPaymentLookupError(error instanceof Error ? error.message : 'Không gửi được yêu cầu đối soát.');
+    } finally {
+      setPaymentLookupLoading(false);
+    }
+  };
+
+  const handleAdminLogin = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAdminError('');
+    setAdminNotice('');
+    setAdminLoading(true);
+    try {
+      const [bookingResult, voucherResult, databaseResult, affiliateClickResult] = await Promise.all([
+        getAdminBookings(adminToken.trim()),
+        getAdminVouchers(adminToken.trim()),
+        getAdminDatabaseOverview(adminToken.trim()),
+        getAdminAffiliateClickReport(adminToken.trim()),
+      ]);
+      setAdminBookings(bookingResult.bookings);
+      setAdminVouchers(voucherResult.vouchers);
+      setAdminDatabaseOverview(databaseResult);
+      setAffiliateClickReport(affiliateClickResult.clicks);
+      setAdminLoggedIn(true);
+    } catch (error) {
+      setAdminLoggedIn(false);
+      setAdminError(error instanceof Error ? error.message : 'Không đăng nhập được.');
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const handleAdminRefresh = async () => {
+    setAdminError('');
+    setAdminLoading(true);
+    try {
+      const [bookingResult, voucherResult, databaseResult, affiliateClickResult] = await Promise.all([
+        getAdminBookings(adminToken.trim()),
+        getAdminVouchers(adminToken.trim()),
+        getAdminDatabaseOverview(adminToken.trim()),
+        getAdminAffiliateClickReport(adminToken.trim()),
+      ]);
+      setAdminBookings(bookingResult.bookings);
+      setAdminVouchers(voucherResult.vouchers);
+      setAdminDatabaseOverview(databaseResult);
+      setAffiliateClickReport(affiliateClickResult.clicks);
+    } catch (error) {
+      setAdminLoggedIn(false);
+      setAdminError(error instanceof Error ? error.message : 'Không tải được danh sách đơn.');
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const handleCreateVoucher = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAdminError('');
+    setAdminNotice('');
+    setVoucherSubmitting(true);
+    try {
+      const result = await createAdminVoucher(adminToken.trim(), voucherDraft);
+      setAdminVouchers((current) => [result.voucher, ...current]);
+      setAdminNotice(`Đã thêm ưu đãi ${result.voucher.title}.`);
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date());
+      setVoucherDraft({ tourId: '*', stopIndex: null, restaurantName: '', title: '', benefit: '', code: '', terms: '', validFrom: today, validTo: today });
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Không lưu được voucher.');
+    } finally {
+      setVoucherSubmitting(false);
+    }
+  };
+
+  const handleVoucherActiveChange = async (voucher: PartnerVoucher) => {
+    setAdminError('');
+    setAdminNotice('');
+    try {
+      const result = await setAdminVoucherActive(adminToken.trim(), voucher.id, !voucher.active);
+      setAdminVouchers((current) => current.map((item) => item.id === voucher.id ? result.voucher : item));
+      setAdminNotice(result.voucher.active ? 'Đã bật ưu đãi.' : 'Đã tạm ẩn ưu đãi.');
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Không cập nhật được trạng thái voucher.');
+    }
+  };
+
+  const handleAdminUpdate = async (booking: BookingRecord) => {
+    setAdminError('');
+    setAdminNotice('');
+    try {
+      const result = await updateAdminBooking(adminToken.trim(), booking.id, {
+        status: booking.status,
+        paymentStatus: booking.paymentStatus,
+        quotedTotalVnd: booking.quotedTotalVnd,
+        adminNote: booking.adminNote,
+        guideName: booking.guideName,
+        guidePhone: booking.guidePhone,
+      });
+      setAdminBookings((current) => current.map((item) => item.id === booking.id ? result.booking : item));
+      setAdminNotice(`Đã cập nhật đơn ${booking.id}.`);
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Không cập nhật được đơn.');
+    }
   };
 
   const navigateWithTransition = (callback: () => void) => {
@@ -1097,6 +1486,17 @@ export default function App() {
   };
 
   const changeStep = (nextStep: typeof step) => {
+    if (nextStep === 'checkout') {
+      setCustomerBooking(null);
+      setBookingError('');
+      setBookingRecoveryNotice('');
+      try {
+        sessionStorage.removeItem(PENDING_BOOKING_STORAGE_KEY);
+      } catch {
+        // Session recovery is optional; booking still works without storage access.
+      }
+      setPendingBookingRecovery(null);
+    }
     navigateWithTransition(() => {
       setStep(nextStep);
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1111,23 +1511,153 @@ export default function App() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  const [locMode, setLocMode] = useState<'gps' | 'manual'>('gps');
-  const [locationAddress, setLocationAddress] = useState<string>('Hồ Gươm, Hoàn Kiếm, Hà Nội');
+  useEffect(() => {
+    if (step !== 'checkout' || !customerBooking) return;
+    requestAnimationFrame(() => {
+      bookingPaymentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      bookingPaymentRef.current?.focus({ preventScroll: true });
+    });
+  }, [step, customerBooking]);
+
+  const [locMode, setLocMode] = useState<'gps' | 'manual'>('manual');
   const [isDetecting, setIsDetecting] = useState<boolean>(false);
 
   // Tùy Chỉnh (Chế độ 1)
   const [customLocation, setCustomLocation] = useState<string>('Phố cổ Hà Nội');
   const [customNeed, setCustomNeed] = useState<string>('Khám phá ẩm thực truyền thống & check-in');
   const [customTimeOption, setCustomTimeOption] = useState<string>('Cả ngày (8:00 - 20:00)');
+  const [customDays, setCustomDays] = useState(1);
   const [customTimeManual, setCustomTimeManual] = useState<string>('');
   const [customBudgetVal, setCustomBudgetVal] = useState<number>(300000); // VNĐ
   const [customHobby, setCustomHobby] = useState<string>('Thích ăn phở, uống cà phê trứng và các món ăn vặt lâu đời');
   const [customRadius, setCustomRadius] = useState<number>(3); // km
   const [customLoading, setCustomLoading] = useState<boolean>(false);
 
-  const [activeTour, setActiveTour] = useState<ThemeTour>(THEMED_TOURS[0]);
+  const [activeTour, setActiveTour] = useState<ThemeTour>(initialLinkedTour || THEMED_TOURS[0]);
   const [activeStopIndex, setActiveStopIndex] = useState<number>(0);
-  const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'model'; text: string }[]>([
+  const [selectedItineraryDay, setSelectedItineraryDay] = useState(1);
+  const [unlockedTourId, setUnlockedTourId] = useState('');
+  const [checkoutProduct, setCheckoutProduct] = useState<'tour' | 'unlock' | 'buddy'>('tour');
+  const activeCustomSaved = Boolean(activeTour.savedId && savedCustomTours.some((tour) => tour.savedId === activeTour.savedId));
+  const toggleSaveActiveTour = () => {
+    if (activeTour.id !== 'custom-tour-result') {
+      toggleSavedTour(activeTour.id);
+      return;
+    }
+    const savedId = activeTour.savedId || `ai-${crypto.randomUUID()}`;
+    const nextTour = { ...activeTour, savedId };
+    if (activeCustomSaved) {
+      setSavedCustomTours((current) => current.filter((tour) => tour.savedId !== savedId));
+      setTourActionNotice('Đã bỏ lịch trình AI khỏi danh sách đã lưu.');
+    } else {
+      setActiveTour(nextTour);
+      setSavedCustomTours((current) => [nextTour, ...current.filter((tour) => tour.savedId !== savedId)]);
+      setTourActionNotice('Đã lưu lịch trình AI trên trình duyệt này.');
+    }
+  };
+
+  useEffect(() => {
+    const hash = readSharedHash();
+    if (hash?.kind !== 'shared' || pendingBookingRecovery) return;
+    let cancelled = false;
+    setSharedItineraryLoading(true);
+    getSharedItinerary(hash.id).then(({ tour }) => {
+      if (cancelled) return;
+      setActiveTour(tour as ThemeTour);
+      setActiveStopIndex(0);
+      setSelectedItineraryDay(1);
+      setStep('render-details');
+    }).catch((error) => {
+      if (!cancelled) {
+        setTourActionNotice(error instanceof Error ? error.message : 'Không tải được lịch trình chia sẻ.');
+        setStep('start');
+      }
+    }).finally(() => { if (!cancelled) setSharedItineraryLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+  const openPaidBookingItinerary = (booking: CustomerBookingView) => {
+    const isUnlockPurchase = booking.tourTitle.startsWith('Mở khóa lịch trình: ');
+    const dayToOpen = isUnlockPurchase ? selectedItineraryDay : 1;
+    const savedTourId = LEGACY_PROVINCE_TO_CURRENT[booking.tourId] || booking.tourId;
+    const savedTour = THEMED_TOURS.find((tour) => tour.id === savedTourId);
+    const bookingStops = Array.isArray(booking.itinerary) ? booking.itinerary : [];
+    const stops = bookingStops.length
+      ? bookingStops.map((stop, index) => ({
+        ...savedTour?.stops[index],
+        ...stop,
+        priceNum: Number(String(stop.price || '').replace(/\D/g, '')) || savedTour?.stops[index]?.priceNum || 0,
+      } as StopItem))
+      : savedTour?.stops;
+    if (!stops?.length) {
+      setPaymentLookupError('Đơn này chưa lưu bản chi tiết lịch trình. Vui lòng liên hệ TasteTrip để nhận lại lịch trình.');
+      return;
+    }
+    setActiveTour({
+      ...(savedTour || THEMED_TOURS[0]),
+      id: booking.tourId || savedTour?.id || 'paid-booking-tour',
+      dayCount: Math.max(1, ...stops.map((stop) => stop.day || 1)),
+      title: booking.tourTitle.replace(/^(Mở khóa lịch trình|Yêu cầu Local Buddy):\s*/, ''),
+      desc: `Lịch trình đã thanh toán · Mã đơn ${booking.id}`,
+      stops,
+      totalCost: booking.quotedTotalVnd !== null
+        ? `${Math.round(booking.quotedTotalVnd / Math.max(booking.guests, 1)).toLocaleString('vi-VN')}đ / người`
+        : savedTour?.totalCost,
+    });
+    if (isUnlockPurchase) setUnlockedTourId(booking.tourId);
+    setSelectedItineraryDay(dayToOpen);
+    const firstStopForDay = stops.findIndex((stop) => (stop.day || 1) === dayToOpen);
+    setActiveStopIndex(firstStopForDay < 0 ? 0 : firstStopForDay);
+    setPaidBookingConfirmation(booking);
+    setCustomerBooking(booking);
+    try { sessionStorage.removeItem(PENDING_BOOKING_STORAGE_KEY); } catch { /* Optional session recovery. */ }
+    setPendingBookingRecovery(null);
+    setStep('render-details');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    if ((step !== 'checkout' && step !== 'payment') || !customerBooking) return;
+    let checking = false;
+    const checkPayment = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const result = await lookupCustomerBooking(customerBooking.id, paymentLookupPhone);
+        setCustomerBooking(result.booking);
+        if (result.booking.paymentStatus === 'paid' && customerBookingMatches.length === 0) openPaidBookingItinerary(result.booking);
+      } catch {
+        // Keep the QR visible during brief network interruptions; the next poll retries.
+      } finally {
+        checking = false;
+      }
+    };
+    if (customerBooking.paymentStatus === 'paid' && customerBookingMatches.length === 0) {
+      openPaidBookingItinerary(customerBooking);
+      return;
+    }
+    if (customerBooking.paymentStatus === 'paid') return;
+    const timer = window.setInterval(checkPayment, 8000);
+    return () => window.clearInterval(timer);
+  }, [step, customerBooking?.id, customerBooking?.paymentStatus, customerBookingMatches.length, paymentLookupPhone]);
+
+  useEffect(() => {
+    if (step !== 'render-details') return;
+    let cancelled = false;
+    getPartnerVouchers(activeTour.id)
+      .then(({ vouchers }) => { if (!cancelled) setPartnerVouchers(vouchers); })
+      .catch(() => { if (!cancelled) setPartnerVouchers([]); });
+    return () => { cancelled = true; };
+  }, [step, activeTour.id]);
+
+  const handleCopyVoucherCode = async (code: string) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setVoucherNotice(`Đã sao chép mã ${code}.`);
+    } catch {
+      setVoucherNotice('Không sao chép được mã. Bạn có thể chọn và sao chép trực tiếp.');
+    }
+  };
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     { role: 'model', text: 'Xin chào! Tôi là Trợ lý AI TasteTrip. Tôi có thể tư vấn món ăn, lịch trình hoặc giai thoại ẩm thực Việt Nam cho bạn.' }
   ]);
   const [chatInput, setChatInput] = useState<string>('');
@@ -1142,64 +1672,64 @@ export default function App() {
           const lng = position.coords.longitude.toFixed(4);
           const locStr = `${lat}° N, ${lng}° E (GPS Verified)`;
           setIsDetecting(false);
-          setLocationAddress(locStr);
+          setLocMode('gps');
           setCustomLocation(locStr);
-          changeStep('ai-chat');
         },
         (error) => {
           console.warn('Geolocation error:', error);
           setIsDetecting(false);
-          const fallbackLoc = '21.0285° N, 105.8525° E (Hà Nội Center - GPS)';
-          setLocationAddress(fallbackLoc);
-          setCustomLocation(fallbackLoc);
-          changeStep('ai-chat');
+          alert(error.code === error.PERMISSION_DENIED
+            ? 'Bạn chưa cấp quyền vị trí. Hãy chọn “Tự nhập địa điểm” để tiếp tục.'
+            : 'Chưa thể lấy vị trí GPS. Hãy thử lại hoặc chọn “Tự nhập địa điểm”.');
         },
         { timeout: 10000, enableHighAccuracy: true }
       );
     } else {
-      setTimeout(() => {
-        setIsDetecting(false);
-        const fallbackLoc = '21.0285° N, 105.8525° E (GPS Verified)';
-        setLocationAddress(fallbackLoc);
-        setCustomLocation(fallbackLoc);
-        changeStep('ai-chat');
-      }, 1200);
+      setIsDetecting(false);
+      alert('Trình duyệt này không hỗ trợ GPS. Hãy chọn “Tự nhập địa điểm” để tiếp tục.');
     }
-  };
-
-  const handleManualLoc = () => {
-    if (!locationAddress.trim()) {
-      alert('Vui lòng nhập địa điểm của bạn!');
-      return;
-    }
-    setCustomLocation(locationAddress);
-    changeStep('ai-chat');
   };
 
   const handleBuildCustomTour = async () => {
     const finalTime = customTimeManual.trim() || customTimeOption;
     const finalBudget = `${customBudgetVal.toLocaleString('vi-VN')}đ`;
+    const requestedDays = customDays;
     
     setCustomLoading(true);
     const promptText = `Hãy thiết kế một lịch trình food tour chi tiết dựa trên các tiêu chí sau:
 1. Vị trí khởi hành / Điểm đến: ${customLocation}
 2. Nhu cầu / Mục đích chuyến đi: ${customNeed}
 3. Thời gian: ${finalTime}
-4. Ngân sách dự kiến: ${finalBudget}
-5. Sở thích ẩm thực: ${customHobby}
-6. Bán kính di chuyển tối đa: ${customRadius} km
+4. Số ngày: ${requestedDays} ngày. Chia lịch trình rõ theo ngày; mỗi điểm dừng phải có thuộc tính day là số nguyên từ 1 đến ${requestedDays}. Tạo ít nhất 4 điểm dừng cho mỗi ngày.
+5. Ngân sách dự kiến: ${finalBudget} mỗi ngày
+6. Sở thích ẩm thực: ${customHobby}
+7. Bán kính di chuyển tối đa: ${customRadius} km
 
-Hãy trả về lịch trình các điểm dừng ăn uống với tên quán thật, địa chỉ, thời gian, mô tả món ăn, mẹo thưởng thức và giá tiền.`;
+Hãy trả về lịch trình các điểm dừng ăn uống với tên quán thật, địa chỉ, thời gian, mô tả món ăn, mẹo thưởng thức và giá tiền. Cấu trúc JSON: { title, desc, duration, stops: [{ day, name, time, activity, address, desc, image, tip, cultureStory, tastingTip, englishMenu, price }] }. Không gộp nhiều ngày vào một ngày.`;
 
     try {
-      const tour = await generateItinerary(promptText);
-      if (tour) {
+      const tour = await generateItinerary(promptText, requestedDays);
+      if (tour && Array.isArray(tour.stops) && tour.stops.length > 0) {
+        if (requestedDays > 1 && typeof tour.itineraryId !== 'string') {
+          throw new Error('Server chưa lưu lịch trình an toàn để mở khóa. Vui lòng tạo lại tour.');
+        }
+        const generatedStops = tour.stops.map((stop: StopItem) => ({ ...stop, day: Number(stop.day) || 1 }));
+        const partnerProvinceId = resolvePartnerProvince(customLocation);
         setActiveTour({
           ...tour,
           id: 'custom-tour-result',
+          savedId: `ai-${tour.itineraryId || crypto.randomUUID()}`,
+          partnerProvinceId,
+          dayCount: requestedDays,
+          serverItineraryId: tour.itineraryId,
+          stops: generatedStops,
           title: tour.title || `Food Tour Tùy Chỉnh: "${customNeed}"`,
-          desc: tour.desc || `Khởi hành: ${customLocation} | Thời gian: ${finalTime} | Ngân sách: ${finalBudget} | Bán kính: ${customRadius}km.`,
+          desc: requestedDays > 1
+            ? `Lịch trình ${requestedDays} ngày được AI thiết kế theo sở thích của bạn. Bạn có thể xem đầy đủ từng ngày.`
+            : tour.desc || `Khởi hành: ${customLocation} | Thời gian: ${finalTime} | Ngân sách: ${finalBudget} | Bán kính: ${customRadius}km.`,
         });
+        setSelectedItineraryDay(1);
+        setUnlockedTourId('');
         setActiveStopIndex(0);
         changeStep('render-details');
         setCustomLoading(false);
@@ -1213,6 +1743,11 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
     }
 
     // Fallback if AI fails
+    if (requestedDays > 1) {
+      setCustomLoading(false);
+      alert('Chưa tạo được lịch trình nhiều ngày an toàn trên server. Vui lòng thử lại sau.');
+      return;
+    }
     const result = buildCustomTourStops(
       customLocation,
       customNeed,
@@ -1224,24 +1759,39 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
     );
 
     setCustomLoading(false);
+    const fallbackStops = result.stops.map((stop, index) => ({ ...stop, day: Math.min(requestedDays, Math.floor(index * requestedDays / result.stops.length) + 1) }));
 
+    const partnerProvinceId = resolvePartnerProvince(customLocation);
     setActiveTour({
       id: 'custom-tour-result',
+      savedId: `ai-${crypto.randomUUID()}`,
+      partnerProvinceId,
+      dayCount: 1,
       title: `Food Tour Tùy Chỉnh: "${customNeed}"`,
       desc: `Khởi hành: ${customLocation} | Thời gian: ${finalTime} | Ngân sách: ${finalBudget} | Bán kính tối đa: ${customRadius}km.`,
       image: '/picture/provinces/vinh-long.jpg',
       region: 'Việt Nam',
-      stops: result.stops,
+      stops: fallbackStops,
       totalDistance: result.totalDistance,
       totalCost: result.totalCost,
       status: result.status
     });
+    setSelectedItineraryDay(1);
+    setUnlockedTourId('');
     setActiveStopIndex(0);
     changeStep('render-details');
   };
 
   const [selectedRegion, setSelectedRegion] = useState<string>('Tất cả');
   const [searchProvince, setSearchProvince] = useState<string>('');
+
+  const getTourEstimatedCost = (tour: ThemeTour) => tour.stops.reduce(
+    (sum, stop) => sum + (stop.priceNum || Number(stop.price.replace(/\D/g, '')) || 0),
+    0,
+  );
+  const getTourCostCoverage = (tour: ThemeTour) => tour.stops.filter(
+    (stop) => (stop.priceNum || Number(stop.price.replace(/\D/g, '')) || 0) > 0,
+  ).length;
 
   const regionsList = [
     'Tất cả',
@@ -1257,28 +1807,42 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
 
   const filteredTours = THEMED_TOURS.filter(tour => {
     const matchRegion = selectedRegion === 'Tất cả' || tour.region === selectedRegion;
-    const matchSearch = tour.title.toLowerCase().includes(searchProvince.toLowerCase()) || tour.desc.toLowerCase().includes(searchProvince.toLowerCase());
-    return matchRegion && matchSearch;
+    const province = CURRENT_PROVINCES.find((item) => item.id === tour.id);
+    const normalizedSearch = normalizePlaceText(searchProvince);
+    const matchSearch = !normalizedSearch || normalizePlaceText(tour.title).includes(normalizedSearch)
+      || normalizePlaceText(tour.desc).includes(normalizedSearch)
+      || Boolean(province?.legacyNames.some((name) => normalizePlaceText(name).includes(normalizedSearch)));
+     const matchSaved = !showSavedTours || savedTourIds.includes(tour.id);
+    return matchRegion && matchSearch && matchSaved;
   });
+  const visibleTours = showSavedTours
+    ? [...filteredTours, ...savedCustomTours.filter((tour) => tour.title.toLowerCase().includes(searchProvince.toLowerCase()))]
+    : filteredTours;
 
   const handleSelectThemeTour = (tour: ThemeTour) => {
     const stops = tour.stops.map((s, idx) => ({
       ...s,
-      priceNum: s.priceNum || (parseInt(s.price.replace(/\D/g, '')) || 50000),
+      priceNum: s.priceNum || (parseInt(s.price.replace(/\D/g, '')) || undefined),
       distance: s.distance || (idx === 0 ? '0.0 km' : `${(0.8 + idx * 0.4).toFixed(1)} km`)
     }));
-    const totalCostNum = stops.reduce((acc, s) => acc + (s.priceNum || 50000), 0);
+    const pricedStops = stops.filter((stop) => Number.isFinite(stop.priceNum) && (stop.priceNum || 0) > 0);
+    const totalCostNum = pricedStops.reduce((acc, s) => acc + (s.priceNum || 0), 0);
     const totalDistNum = Number(stops.reduce((acc, s, idx) => idx === 0 ? 0 : acc + Number((s.distance || '0').split(' ')[0]), 0).toFixed(1));
     
     const enrichedTour: ThemeTour = {
       ...tour,
       stops,
-      totalCost: `${totalCostNum.toLocaleString('vi-VN')}đ`,
+      totalCost: pricedStops.length === stops.length ? `${totalCostNum.toLocaleString('vi-VN')}đ` : undefined,
+      foodCostKnownVnd: totalCostNum,
+      foodCostPricedStops: pricedStops.length,
       totalDistance: `${totalDistNum > 0 ? totalDistNum : (stops.length * 0.9).toFixed(1)} km`
     };
 
     setActiveTour(enrichedTour);
     setActiveStopIndex(0);
+    setSelectedItineraryDay(1);
+    setUnlockedTourId('');
+    setCheckoutProduct('tour');
     changeStep('render-details');
   };
 
@@ -1296,10 +1860,48 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
       parts: [m.text]
     }));
 
-    const reply = await sendChatMessage(userMsg, history);
-    setChatMessages([...newMessages, { role: 'model', text: reply }]);
-    setChatLoading(false);
+    try {
+      const reply = await sendChatMessage(userMsg, history);
+      const normalized = normalizePlaceText(userMsg);
+      const provinceId = resolvePartnerProvince(userMsg)
+        || (step === 'render-details' ? activeTour.partnerProvinceId || (activeTour.id !== 'custom-tour-result' ? activeTour.id : undefined) : undefined);
+      const wantsHotel = /khach san|o dau|cho o|dat phong|nghi dem/.test(normalized);
+      const wantsTransport = /di chuyen|di lai|xe|tau|may bay|den bang gi|van chuyen/.test(normalized);
+      const wantsGuided = /tour|huong dan|local guide|huong dan vien|trai nghiem/.test(normalized);
+      const links = provinceId ? PROVINCE_PARTNER_LINKS[provinceId] : undefined;
+      const partnerLinks: ChatPartnerLink[] = [
+        ...(wantsHotel ? (links?.hotelLinks || []).map((link) => ({ ...link, provinceId: provinceId!, placement: 'assistant_chat' as const })) : []),
+        ...(wantsTransport ? (links?.transportLinks || []).map((link) => ({ ...link, provinceId: provinceId!, placement: 'assistant_chat' as const })) : []),
+        ...(wantsGuided ? (links?.tourLinks || []).map((link) => ({ ...link, provinceId: provinceId!, placement: 'assistant_chat' as const })) : []),
+      ].filter(isActiveAffiliateLink);
+      const partnerNote = partnerLinks.length ? '\n\nMột số dịch vụ đối tác tại điểm đến này:' : '';
+      setChatMessages([...newMessages, { role: 'model', text: `${reply}${partnerNote}`, partnerLinks }]);
+    } catch (error) {
+      setChatMessages([...newMessages, { role: 'model', text: error instanceof Error ? error.message : 'Trợ lý chưa phản hồi được. Vui lòng thử lại.' }]);
+    } finally { setChatLoading(false); }
   };
+
+  const itineraryDayCount = Math.max(activeTour.dayCount || 1, ...activeTour.stops.map((stop) => stop.day || 1));
+  const isMultiDayItinerary = activeTour.id === 'custom-tour-result' && itineraryDayCount > 1;
+  const selectedDayStops = activeTour.stops.filter((stop) => (stop.day || 1) === selectedItineraryDay);
+  const selectedDayFirstStopIndex = activeTour.stops.findIndex((stop) => (stop.day || 1) === selectedItineraryDay);
+  const selectedDayActiveStopPosition = Math.max(0, selectedDayStops.findIndex((stop) => stop === activeTour.stops[activeStopIndex]));
+  const selectedDayIsLocked = false;
+  const currentDayFoodCost = selectedDayStops.reduce((sum, stop) => sum + (stop.priceNum || Number(String(stop.price || '').replace(/\D/g, '')) || 0), 0);
+  const allDaysFoodCost = activeTour.stops.reduce((sum, stop) => sum + (stop.priceNum || Number(String(stop.price || '').replace(/\D/g, '')) || 0), 0);
+  const activeProvinceId = activeTour.partnerProvinceId
+    ? (LEGACY_PROVINCE_TO_CURRENT[activeTour.partnerProvinceId] || activeTour.partnerProvinceId)
+    : (PROVINCE_PARTNER_LINKS[activeTour.id] ? activeTour.id : undefined);
+  const activePartnerData = activeProvinceId ? PROVINCE_PARTNER_LINKS[activeProvinceId] : undefined;
+  const activeTourLinks = (activePartnerData?.tourLinks || []).filter(isActiveAffiliateLink);
+  const activeHotelLinks = (activePartnerData?.hotelLinks || []).filter(isActiveAffiliateLink);
+  const activeTransportLinks = (activePartnerData?.transportLinks || []).filter(isActiveAffiliateLink);
+  const estimatedFoodCostPerPersonVnd = checkoutProduct === 'unlock'
+    ? 49000
+    : isMultiDayItinerary ? currentDayFoodCost : allDaysFoodCost;
+  const estimatedTripTotalVnd = checkoutProduct === 'unlock'
+    ? 49000
+    : checkoutProduct === 'buddy' ? 150000 : estimatedFoodCostPerPersonVnd * bookingGuests;
 
   return (
     <div className="min-h-screen bg-bamboo-watermark text-[#2C221E] font-sans-inter selection:bg-[#D4B872] transition-colors duration-700 overflow-x-hidden">
@@ -1308,39 +1910,52 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
       <div className="fixed inset-0 pointer-events-none opacity-[0.04] z-0 overflow-hidden bg-cover bg-center" style={{ backgroundImage: 'url(/picture/hoa-tiet-trong-dong-vector-01.jpg)' }}></div>
 
       {/* HEADER */}
-      <header className={`fixed top-0 left-0 right-0 z-[100] transition-all duration-700 ${scrolled || step !== 'start' ? 'bg-[#FAF6EE]/95 backdrop-blur-xl border-b border-[#D4B872]/20 py-4 shadow-sm' : 'bg-transparent py-8'}`} style={{ viewTransitionName: 'header-group' }}>
-        <div className="max-w-7xl mx-auto px-8 flex items-center justify-between">
-          <div onClick={() => changeStep('start')} className="flex items-center gap-4 cursor-pointer group focus-ring-accessible rounded-2xl p-1" tabIndex={0}>
-            <div className="relative w-11 h-11 overflow-hidden rounded-full bg-[#8B0000] flex items-center justify-center border border-[#D4B872]/30 shadow-inner group-hover:scale-110 transition-transform">
+      <header className={`fixed top-0 left-0 right-0 z-[100] transition-all duration-500 ${scrolled || step !== 'start' ? 'bg-[#FAF7F2]/95 backdrop-blur-xl border-b border-[#C59B4B]/20 py-3.5 shadow-editorial' : 'bg-transparent py-6'}`} style={{ viewTransitionName: 'header-group' }}>
+        <div className="max-w-7xl mx-auto px-6 sm:px-8 flex items-center justify-between">
+          <div onClick={() => changeStep('start')} className="flex items-center gap-3.5 cursor-pointer group focus-ring-accessible rounded-2xl p-1" tabIndex={0}>
+            <div className="relative w-10 h-10 overflow-hidden rounded-full bg-[#8B1E1E] flex items-center justify-center border border-[#C59B4B]/30 shadow-md group-hover:scale-105 transition-transform duration-300">
                <div className="absolute inset-0 bg-gradient-to-tr from-transparent to-white/20 animate-pulse"></div>
-               <Utensils className="w-5 h-5 text-[#D4B872] relative z-10" />
+               <Utensils className="w-5 h-5 text-[#C59B4B] relative z-10" />
             </div>
             <div className="flex flex-col">
-              <span className="font-serif-playfair font-black text-2xl tracking-tighter text-[#8B0000] italic transition-all">TasteTrip</span>
-              <span className="text-[10px] font-bold font-sans-montserrat text-[#D4B872] uppercase tracking-[0.2em] -mt-1 opacity-80">Hành Trình Di Sản</span>
+              <span className="font-serif-playfair font-black text-2xl tracking-tighter text-[#8B1E1E] italic transition-all leading-none">TasteTrip</span>
+              <span className="text-[10px] font-bold font-sans text-[#C59B4B] uppercase tracking-[0.22em] mt-0.5">Hành Trình Di Sản</span>
             </div>
           </div>
 
+          {/* QUICK NAV ACTIONS */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            {savedTourIds.length > 0 && (
+              <button
+                onClick={() => setShowSavedTours(true)}
+                className="hidden md:inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-full border border-[#C59B4B]/30 bg-white/70 text-[#8B1E1E] hover:bg-white transition-all shadow-sm"
+                title="Tour đã lưu"
+              >
+                <Bookmark className="w-3.5 h-3.5 fill-current" />
+                <span>Đã lưu ({savedTourIds.length})</span>
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
       {/* TEXT MARQUEE TICKER */}
-      <div className="bg-[#8B0000] text-[#D4B872] py-2.5 overflow-hidden whitespace-nowrap mt-20 border-y border-[#D4B872]/30 shadow-inner">
-        <div className="animate-marquee font-sans-oswald text-xs font-black tracking-[0.3em] uppercase flex gap-12">
+      <div className="bg-[#8B1E1E] text-[#FAF7F2] py-2.5 overflow-hidden whitespace-nowrap mt-20 border-y border-[#C59B4B]/25 shadow-inner">
+        <div className="animate-marquee font-sans text-xs font-bold tracking-[0.25em] uppercase flex gap-12 text-[#FAF7F2]/90">
           <span>🌾 HÀNH TRÌNH VẠN DẶM QUA HƯƠNG VỊ BẢN SẮC VIỆT</span>
-          <span>✦</span>
+          <span className="text-[#C59B4B]">✦</span>
           <span>🏛️ MỖI MÓN ĂN LÀ MỘT DI SẢN • MỖI MIỀN ĐẤT LÀ MỘT CÂU CHUYỆN</span>
-          <span>✦</span>
+          <span className="text-[#C59B4B]">✦</span>
           <span>🍜 VIỆT NAM • ĐẬM ĐÀ HỒN THIÊNG DÂN TỘC</span>
-          <span>✦</span>
+          <span className="text-[#C59B4B]">✦</span>
           <span>✨ THƯỞNG VỊ TRĂM MIỀN • TRỌN VẸN TINH HOA NON NƯỚC</span>
-          <span>✦</span>
+          <span className="text-[#C59B4B]">✦</span>
           <span>🌾 HÀNH TRÌNH VẠN DẶM QUA HƯƠNG VỊ BẢN SẮC VIỆT</span>
-          <span>✦</span>
+          <span className="text-[#C59B4B]">✦</span>
           <span>🏛️ MỖI MÓN ĂN LÀ MỘT DI SẢN • MỖI MIỀN ĐẤT LÀ MỘT CÂU CHUYỆN</span>
-          <span>✦</span>
+          <span className="text-[#C59B4B]">✦</span>
           <span>🍜 VIỆT NAM • ĐẬM ĐÀ HỒN THIÊNG DÂN TỘC</span>
-          <span>✦</span>
+          <span className="text-[#C59B4B]">✦</span>
           <span>✨ THƯỞNG VỊ TRĂM MIỀN • TRỌN VẸN TINH HOA NON NƯỚC</span>
         </div>
       </div>
@@ -1367,9 +1982,10 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                   "Hồn Việt gửi trao trong từng phong vị." Chu du qua dải đất hình chữ S, nơi mỗi món ăn là một pho sử sống đong đầy ký ức và chiều sâu di sản ngàn năm.
                 </p>
                 <div className="pt-6 grid grid-cols-1 sm:grid-cols-2 gap-5 max-w-xl">
-                  {/* Card 1: Trợ Lý AI */}
+                  {/* Card 1: Thiết Kế Tour Bằng Trí Tuệ Nhân Tạo */}
                   <div 
-                    onClick={() => changeStep('get-loc')} 
+                    onClick={() => changeStep('ai-chat')}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') changeStep('ai-chat'); }}
                     className="group bg-white p-7 rounded-[32px] shadow-lg hover:shadow-2xl hover:-translate-y-1.5 transition-all duration-500 cursor-pointer border border-[#D4B872]/30 relative overflow-hidden focus-ring-accessible"
                     tabIndex={0}
                   >
@@ -1379,10 +1995,10 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                       </div>
                       <div className="space-y-1.5">
                         <h4 className="font-serif-playfair text-xl font-black text-[#2C221E] group-hover:text-[#1E5631] transition-colors leading-tight">
-                          Trợ Lý AI 
+                          Tạo Lịch Trình AI
                         </h4>
                         <p className="font-serif-merriweather text-xs text-[#2C221E]/70 leading-relaxed">
-                          Chọn GPS hoặc nhập địa điểm, thiết lập 6 mục chi tiết kết hợp Gemini AI.
+                          Nhập tiêu chí khởi hành, nhu cầu và ngân sách để Gemini AI tự động tính toán lộ trình tối ưu hoá tuyến đường.
                         </p>
                       </div>
                       <div className="pt-2 flex items-center gap-1.5 text-[#1E5631] font-black font-sans-montserrat text-[10px] uppercase tracking-[0.2em]">
@@ -1566,29 +2182,30 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                     <h3 className="font-serif-playfair text-3xl font-black text-[#8B0000]">{section.regionTitle}</h3>
                   </div>
 
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-5 sm:gap-6">
                     {section.items.map((item, idx) => (
                       <div 
                         key={idx} 
                         onClick={() => setSelectedFoodModal({ ...item, regionTitle: section.regionTitle, tagColor: section.tagColor })}
-                        className="group relative h-72 rounded-[30px] overflow-hidden shadow-xl border border-[#D4B872]/30 cursor-pointer hover:shadow-2xl hover:-translate-y-2 transition-all duration-500"
+                        className="group relative aspect-[4/5] min-h-[290px] rounded-[28px] overflow-hidden shadow-editorial border border-[#C59B4B]/25 cursor-pointer hover:shadow-editorial-hover hover:-translate-y-1.5 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
                       >
                         <img 
                           src={item.img} 
                           alt={item.name} 
-                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
+                          loading="lazy"
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]" 
                         />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-75 group-hover:opacity-90 transition-opacity"></div>
+                        <div className="absolute inset-0 bg-gradient-to-t from-[#2C221E]/90 via-[#2C221E]/30 to-transparent opacity-80 group-hover:opacity-95 transition-opacity duration-300"></div>
                         <div className="absolute top-4 left-4">
-                          <span className={`text-[10px] font-black font-sans-montserrat px-3 py-1 rounded-full uppercase tracking-widest shadow-md ${section.tagColor}`}>
+                          <span className={`text-[10px] font-bold font-sans px-3 py-1.5 rounded-full uppercase tracking-wider shadow-md backdrop-blur-md ${section.tagColor}`}>
                             {item.tag}
                           </span>
                         </div>
-                        <div className="absolute bottom-5 left-5 right-5 text-white space-y-1">
-                          <h4 className="font-serif-playfair font-bold text-lg group-hover:text-[#D4B872] transition-colors">{item.name}</h4>
-                          <div className="flex items-center gap-1.5 text-[10px] font-sans-montserrat text-[#D4B872] uppercase tracking-wider group-hover:translate-x-1 transition-transform">
+                        <div className="absolute bottom-5 left-5 right-5 text-white space-y-1.5">
+                          <h4 className="font-serif-playfair font-bold text-lg group-hover:text-[#E0BA6A] transition-colors leading-tight">{item.name}</h4>
+                          <div className="flex items-center gap-1.5 text-[10px] font-sans text-[#E0BA6A] uppercase tracking-wider group-hover:translate-x-1 transition-transform duration-300">
                             <Sparkles className="w-3 h-3" />
-                            <span>Chạm để xem chi tiết</span>
+                            <span>Khám phá giai thoại</span>
                           </div>
                         </div>
                       </div>
@@ -1603,18 +2220,19 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
         {/* POPUP MODAL: NỬA ẢNH - NỬA LỊCH SỬ / CÁCH ĂN ĐÚNG VỊ / THỰC ĐƠN TIẾNG ANH */}
         {selectedFoodModal && (
           <div 
-            className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-md flex items-center justify-center p-4 md:p-8 animate-motion-floatIn"
+            className="fixed inset-0 z-[200] bg-black/65 backdrop-blur-md flex items-center justify-center p-4 md:p-8 animate-motion-fadeIn"
             onClick={() => setSelectedFoodModal(null)}
           >
             <div 
-              className="relative w-full max-w-5xl bg-white rounded-[36px] overflow-hidden shadow-2xl border border-[#D4B872]/40 flex flex-col md:flex-row max-h-[90vh]"
+              className="relative w-full max-w-5xl bg-white rounded-[32px] overflow-hidden shadow-editorial-lg border border-[#C59B4B]/35 flex flex-col md:flex-row max-h-[90vh]"
               onClick={(e) => e.stopPropagation()}
             >
               {/* NÚT ĐÓNG */}
               <button 
                 onClick={() => setSelectedFoodModal(null)}
-                className="absolute top-4 right-4 z-30 p-2.5 bg-black/50 hover:bg-black/80 text-white rounded-full transition-all shadow-lg"
-                title="Đóng"
+                className="absolute top-4 right-4 z-30 p-2.5 bg-black/50 hover:bg-black/80 text-white rounded-full transition-all shadow-lg focus-ring-accessible cursor-pointer"
+                title="Đóng cửa sổ"
+                aria-label="Đóng"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1627,11 +2245,11 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                   className="w-full h-full object-cover"
                 />
                 <div className="absolute top-6 left-6 flex flex-col gap-2">
-                  <span className={`text-[11px] font-black font-sans-montserrat px-3.5 py-1.5 rounded-full uppercase tracking-widest shadow-md ${selectedFoodModal.tagColor || 'bg-[#8B0000] text-[#D4B872]'}`}>
+                  <span className={`text-[11px] font-bold font-sans px-3.5 py-1.5 rounded-full uppercase tracking-wider shadow-md backdrop-blur-md ${selectedFoodModal.tagColor || 'bg-[#8B1E1E] text-white'}`}>
                     {selectedFoodModal.tag}
                   </span>
                   {selectedFoodModal.regionTitle && (
-                    <span className="text-[10px] font-bold font-sans-montserrat px-3 py-1 rounded-full uppercase tracking-widest bg-white/90 text-[#2C221E] shadow-sm backdrop-blur-sm w-fit">
+                    <span className="text-[10px] font-bold font-sans px-3 py-1 rounded-full uppercase tracking-wider bg-white/95 text-[#2C221E] shadow-sm backdrop-blur-md w-fit">
                       {selectedFoodModal.regionTitle}
                     </span>
                   )}
@@ -1639,122 +2257,57 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
               </div>
 
               {/* MỘT NỬA (50%): LỊCH SỬ, CÁCH THƯỞNG THỨC ĐÚNG VỊ & MENU TIẾNG ANH */}
-              <div className="w-full md:w-1/2 p-7 md:p-9 overflow-y-auto space-y-6 flex flex-col justify-between">
+              <div className="w-full md:w-1/2 p-7 md:p-9 overflow-y-auto space-y-6 flex flex-col justify-between bg-[#FAF7F2]/40">
                 <div className="space-y-6">
                   <div>
-                    <span className="text-[11px] font-bold font-sans-montserrat text-[#D4B872] uppercase tracking-[0.25em]">Di Sản Ẩm Thực Việt Nam</span>
-                    <h3 className="font-serif-playfair font-black text-3xl md:text-4xl text-[#8B0000] leading-tight mt-1">{selectedFoodModal.name}</h3>
+                    <span className="text-[11px] font-bold font-sans text-[#C59B4B] uppercase tracking-[0.25em]">Di Sản Ẩm Thực Việt Nam</span>
+                    <h3 className="font-serif-playfair font-black text-3xl md:text-4xl text-[#8B1E1E] leading-tight mt-1">{selectedFoodModal.name}</h3>
                   </div>
 
                   {/* 1. LỊCH SỬ VỀ MÓN ĂN */}
                   <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-[#8B0000] text-xs font-bold font-sans-montserrat uppercase tracking-wider">
-                      <BookOpen className="w-4 h-4" />
+                    <div className="flex items-center gap-2 text-[#8B1E1E] text-xs font-bold font-sans uppercase tracking-wider">
+                      <BookOpen className="w-4 h-4 text-[#C59B4B]" />
                       <span>Lịch Sử & Giai Thoại Món Ăn</span>
                     </div>
-                    <p className="font-serif-merriweather text-xs md:text-[13px] text-[#2C221E]/80 leading-relaxed pl-4 border-l-2 border-[#8B0000]/40">
+                    <p className="font-sans text-xs md:text-[13px] text-[#2C221E]/85 leading-relaxed pl-4 border-l-2 border-[#8B1E1E]/40">
                       {selectedFoodModal.story}
                     </p>
                   </div>
 
                   {/* 2. CÁCH THƯỞNG THỨC ĐÚNG VỊ */}
                   <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-[#1E5631] text-xs font-bold font-sans-montserrat uppercase tracking-wider">
-                      <Utensils className="w-4 h-4" />
-                      <span>Cách Thưởng Thức Đúng Vị</span>
+                    <div className="flex items-center gap-2 text-[#1C4329] text-xs font-bold font-sans uppercase tracking-wider">
+                      <Utensils className="w-4 h-4 text-[#1C4329]" />
+                      <span>Cách Thưởng Thức Chuẩn Vị</span>
                     </div>
-                    <p className="font-serif-merriweather text-xs md:text-[13px] text-[#2C221E]/80 leading-relaxed pl-4 border-l-2 border-[#1E5631]/40">
+                    <p className="font-sans text-xs md:text-[13px] text-[#2C221E]/85 leading-relaxed pl-4 border-l-2 border-[#1C4329]/40">
                       {selectedFoodModal.tastingTip}
                     </p>
                   </div>
 
                   {/* 3. THỰC ĐƠN TIẾNG ANH */}
-                  <div className="space-y-1.5 bg-[#FAF6EE] p-4 rounded-2xl border border-[#D4B872]/40">
-                    <div className="flex items-center gap-2 text-[#8B0000] text-xs font-bold font-sans-montserrat uppercase tracking-wider">
-                      <Globe className="w-4 h-4 text-[#8B0000]" />
-                      <span>Thực Đơn Tiếng Anh (English Menu)</span>
+                  <div className="space-y-2 bg-white p-4.5 rounded-2xl border border-[#C59B4B]/35 shadow-sm">
+                    <div className="flex items-center gap-2 text-[#8B1E1E] text-xs font-bold font-sans uppercase tracking-wider">
+                      <Globe className="w-4 h-4 text-[#C59B4B]" />
+                      <span>International English Menu</span>
                     </div>
-                    <p className="font-sans-inter text-xs text-[#2C221E]/80 leading-relaxed italic">
+                    <p className="font-serif-playfair text-xs md:text-[13px] text-[#2C221E]/85 leading-relaxed italic pl-4 border-l-2 border-[#C59B4B]/40">
                       {selectedFoodModal.englishMenu}
                     </p>
                   </div>
                 </div>
 
-                <div className="pt-2">
+                <div className="pt-4">
                   <button 
                     onClick={() => setSelectedFoodModal(null)}
-                    className="w-full bg-[#8B0000] text-white py-3.5 rounded-2xl font-sans-montserrat font-bold text-xs uppercase tracking-widest shadow-md hover:bg-[#A52A2A] transition-all"
+                    className="w-full bg-[#8B1E1E] text-white py-3.5 rounded-2xl font-sans font-bold text-xs uppercase tracking-widest shadow-editorial hover:bg-[#6D1414] transition-all cursor-pointer focus-ring-accessible"
                   >
                     Đóng Khám Phá
                   </button>
                 </div>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* STEP 2: GET LOC */}
-        {step === 'get-loc' && (
-          <div className="max-w-xl mx-auto bg-white p-12 rounded-[40px] shadow-2xl border border-[#D4B872]/20 space-y-10 animate-motion-floatIn my-20">
-            <div className="flex items-center justify-between">
-              <button onClick={() => changeStep('start')} className="text-[11px] font-bold font-sans-montserrat uppercase tracking-widest text-[#8B0000] hover:italic flex items-center gap-2 focus-ring-accessible"><ArrowLeft className="w-4 h-4" /> Quay lại</button>
-              <span className="text-[10px] font-black font-sans-montserrat text-[#8B0000] bg-[#D4B872]/20 px-4 py-1.5 rounded-full uppercase tracking-widest">Bước 1: Lấy Vị Trí</span>
-            </div>
-            
-            <div className="text-center space-y-2">
-              <h2 className="font-serif-playfair text-4xl font-black text-[#2C221E]">Xác Định <span className="italic text-[#8B0000]">Vị Trí Của Bạn</span></h2>
-              <p className="font-serif-lora text-xs text-[#2C221E]/60 italic">Chọn tự động qua GPS hoặc nhập địa chỉ điểm đến của bạn.</p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <button 
-                onClick={() => setLocMode('gps')}
-                className={`p-5 rounded-2xl border-2 font-bold text-left transition-all flex flex-col gap-3 ${locMode === 'gps' ? 'border-[#8B0000] bg-[#8B0000]/5 text-[#8B0000]' : 'border-[#D4B872]/30 text-[#2C221E]/70 hover:bg-[#D4B872]/10'}`}
-              >
-                <Navigation className="w-6 h-6 text-[#8B0000]" />
-                <div>
-                  <div className="font-sans-montserrat text-sm">Tự động GPS</div>
-                  <div className="text-[10px] font-normal opacity-75">Xác định tọa độ hiện tại</div>
-                </div>
-              </button>
-
-              <button 
-                onClick={() => setLocMode('manual')}
-                className={`p-5 rounded-2xl border-2 font-bold text-left transition-all flex flex-col gap-3 ${locMode === 'manual' ? 'border-[#8B0000] bg-[#8B0000]/5 text-[#8B0000]' : 'border-[#D4B872]/30 text-[#2C221E]/70 hover:bg-[#D4B872]/10'}`}
-              >
-                <MapPin className="w-6 h-6 text-[#8B0000]" />
-                <div>
-                  <div className="font-sans-montserrat text-sm">Nhập thủ công</div>
-                  <div className="text-[10px] font-normal opacity-75">Nhập địa điểm bắt đầu</div>
-                </div>
-              </button>
-            </div>
-
-            {locMode === 'gps' ? (
-              <button 
-                onClick={handleDetectGPS} 
-                disabled={isDetecting} 
-                className="w-full bg-[#8B0000] text-white py-5 rounded-2xl font-sans-poppins font-bold text-base shadow-xl hover:bg-[#A52A2A] transition-all flex items-center justify-center gap-2 focus-ring-accessible"
-              >
-                {isDetecting ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <>Xác định tọa độ hiện tại qua GPS</>}
-              </button>
-            ) : (
-              <div className="space-y-4">
-                <input 
-                  type="text" 
-                  value={locationAddress === 'Hồ Gươm, Hoàn Kiếm, Hà Nội' ? '' : locationAddress} 
-                  onChange={(e) => setLocationAddress(e.target.value)} 
-                  placeholder="Nhập địa chỉ hoặc điểm đến của bạn..." 
-                  className="w-full p-5 bg-[#FAF6EE] border-2 border-transparent rounded-2xl font-serif-lora text-base focus:border-[#D4B872] focus:outline-none" 
-                />
-                <button 
-                  onClick={handleManualLoc} 
-                  className="w-full bg-[#8B0000] text-white py-5 rounded-2xl font-sans-poppins font-bold text-base shadow-xl hover:bg-[#A52A2A] transition-all focus-ring-accessible"
-                >
-                  Xác nhận địa điểm & Tiếp tục
-                </button>
-              </div>
-            )}
           </div>
         )}
 
@@ -1823,6 +2376,14 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
               </div>
 
               <div>
+                <label className="block text-xs font-bold font-sans-montserrat text-[#8B0000] uppercase tracking-wider mb-2">Số ngày trải nghiệm</label>
+                <select value={customDays} onChange={(event) => setCustomDays(Number(event.target.value))} className="w-full rounded-2xl border bg-[#FAF6EE] p-3.5 font-serif-lora text-sm">
+                  <option value={1}>1 ngày</option><option value={2}>2 ngày</option><option value={3}>3 ngày</option>
+                </select>
+                <p className="mt-1 text-xs text-[#2C221E]/60">Tạo lịch trình từ 1 đến 3 ngày theo nhu cầu của bạn.</p>
+              </div>
+
+              <div>
                 <label className="block text-xs font-bold font-sans-montserrat text-[#8B0000] uppercase tracking-wider mb-2 flex items-center justify-between">
                   <span className="flex items-center gap-1.5"><DollarSign className="w-4 h-4 text-[#8B0000]" /> 4. Ngân sách dự kiến</span>
                   <span className="text-sm font-black text-[#8B0000]">{Number(customBudgetVal).toLocaleString('vi-VN')}đ</span>
@@ -1837,9 +2398,9 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                   className="w-full accent-[#8B0000] cursor-pointer"
                 />
                 <div className="flex justify-between text-[10px] text-[#2C221E]/60 font-sans-montserrat mt-1">
-                  <span>50.000đ (Bình dân)</span>
-                  <span>500.000đ (Đặc sản)</span>
-                  <span>1.000.000đ+ (Sang trọng)</span>
+                  <span>50.000đ</span>
+                  <span>500.000đ</span>
+                  <span>1.000.000đ+</span>
                 </div>
               </div>
 
@@ -1882,11 +2443,11 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
           <div className="space-y-12 max-w-7xl mx-auto py-16 px-8 animate-motion-floatIn">
             <div className="flex items-center justify-between">
               <button onClick={() => changeStep('start')} className="text-[10px] font-black font-sans-montserrat uppercase tracking-widest text-[#8B0000] hover:underline flex items-center gap-1"><ArrowLeft className="w-4 h-4" /> Quay lại</button>
-              <span className="text-[10px] font-black font-sans-montserrat text-[#8B0000] bg-[#D4B872]/20 px-4 py-1.5 rounded-full uppercase tracking-widest">63 Tỉnh Thành • Food Tour</span>
+              <span className="text-[10px] font-black font-sans-montserrat text-[#8B0000] bg-[#D4B872]/20 px-4 py-1.5 rounded-full uppercase tracking-widest">34 Tỉnh Thành • Food Tour</span>
             </div>
 
             <div className="text-center space-y-4 max-w-2xl mx-auto">
-              <h2 className="font-serif-playfair text-4xl lg:text-5xl font-bold text-[#2C221E]">Khám Phá <span className="text-[#8B0000] italic">63 Tỉnh Thành</span> Việt Nam</h2>
+              <h2 className="font-serif-playfair text-4xl lg:text-5xl font-bold text-[#2C221E]">Khám Phá <span className="text-[#8B0000] italic">34 Tỉnh Thành</span> Việt Nam</h2>
               <p className="font-serif-lora text-sm text-[#2C221E]/70 italic">Trải nghiệm food tour chuẩn vị từ Bắc chí Nam với các món đặc sản sáng, trưa, chiều, tối.</p>
 
               {/* SEARCH INPUT */}
@@ -1916,10 +2477,24 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
               ))}
             </div>
 
+            <div className="flex flex-wrap items-center justify-center gap-3 -mt-6">
+              <button
+                type="button"
+                onClick={() => setShowSavedTours((current) => !current)}
+                aria-pressed={showSavedTours}
+                className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-bold transition-colors ${showSavedTours ? 'border-[#8B0000] bg-[#8B0000] text-white' : 'border-[#D4B872]/50 bg-white text-[#8B0000]'}`}
+              >
+                <Bookmark className="h-4 w-4" />
+                {showSavedTours ? 'Đang xem tour đã lưu' : `Tour đã lưu (${savedTourIds.length + savedCustomTours.length})`}
+              </button>
+              <span className="text-xs text-[#2C221E]/60">Lịch trình lưu trên trình duyệt này. Chọn một lịch trình để mở lại.</span>
+            </div>
+
             {/* TOURS GRID */}
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {filteredTours.map(tour => (
-                <div key={tour.id} onClick={() => handleSelectThemeTour(tour)} className="bg-white rounded-[35px] overflow-hidden shadow-lg hover:shadow-2xl transition-all border border-[#D4B872]/30 cursor-pointer group flex flex-col justify-between">
+              {visibleTours.map(tour => (
+                <div key={`${tour.id}-${tour.savedId || 'catalog'}`} className="relative bg-white rounded-[35px] overflow-hidden shadow-lg hover:shadow-2xl transition-all border border-[#D4B872]/30 group">
+                  <button type="button" onClick={() => tour.savedId ? (setActiveTour(tour), setActiveStopIndex(0), setSelectedItineraryDay(1), changeStep('render-details')) : handleSelectThemeTour(tour)} aria-label={`Xem lịch trình ${tour.title}`} className="block w-full text-left focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-[#8B0000]/30">
                   <div className="relative h-56 overflow-hidden">
                     <img src={tour.image} alt={tour.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
                     <div className="absolute top-4 left-4 bg-[#8B0000] text-[#D4B872] px-3.5 py-1 rounded-full text-xs font-bold font-sans-montserrat shadow">
@@ -1933,19 +2508,22 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                     </div>
                     <div className="pt-4 flex items-center justify-between border-t border-[#FAF6EE]">
                       <span className="text-[10px] font-bold font-sans-montserrat text-[#D4B872] uppercase tracking-wider">{tour.stops.length} Món ăn / Điểm dừng</span>
-                      <div className="flex items-center gap-1 text-[#8B0000] font-bold font-sans-montserrat text-xs group-hover:translate-x-1 transition-transform">
-                        <span>Chi tiết</span> <ChevronRight className="w-4 h-4" />
-                      </div>
                     </div>
+                    <p className="text-xs text-[#2C221E]/65">Mức ăn tham khảo: <strong className="text-[#8B0000]">{getTourCostCoverage(tour) ? `${getTourEstimatedCost(tour).toLocaleString('vi-VN')}đ / người` : 'Chưa có dữ liệu giá'}</strong>{getTourCostCoverage(tour) > 0 && getTourCostCoverage(tour) < tour.stops.length ? ` · đã có giá ${getTourCostCoverage(tour)}/${tour.stops.length} điểm` : ''}</p>
                   </div>
+                  </button>
+                  <button type="button" aria-label={tour.savedId ? 'Bỏ lưu lịch trình' : savedTourIds.includes(tour.id) ? 'Bỏ lưu tour' : 'Lưu tour'} aria-pressed={tour.savedId ? true : savedTourIds.includes(tour.id)} onClick={() => tour.savedId ? setSavedCustomTours((current) => current.filter((saved) => saved.savedId !== tour.savedId)) : toggleSavedTour(tour.id)} className="absolute right-4 top-4 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-white/95 text-[#8B0000] shadow transition-transform hover:scale-105">
+                    <Bookmark className={`h-5 w-5 ${tour.savedId || savedTourIds.includes(tour.id) ? 'fill-current' : ''}`} />
+                  </button>
                 </div>
               ))}
             </div>
 
-            {filteredTours.length === 0 && (
+            {visibleTours.length === 0 && (
               <div className="text-center py-20 bg-white rounded-[40px] border border-[#D4B872]/20 space-y-3">
                 <Utensils className="w-12 h-12 text-[#D4B872] mx-auto opacity-30" />
                 <p className="font-serif-lora italic text-[#2C221E]/50">Không tìm thấy tỉnh thành phù hợp với tìm kiếm của bạn.</p>
+                <button type="button" onClick={() => { setShowSavedTours(false); setSearchProvince(''); setSelectedRegion('Tất cả'); }} className="mt-2 text-sm font-bold text-[#8B0000] underline">Xóa bộ lọc và xem tất cả tour</button>
               </div>
             )}
           </div>
@@ -1973,85 +2551,34 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
 
             <div className="space-y-6">
                 <div>
-                  <label className="block text-xs font-bold font-sans-montserrat text-[#1E5631] uppercase tracking-wider mb-2 flex items-center justify-between">
-                    <span className="flex items-center gap-1.5"><MapPin className="w-4 h-4 text-[#1E5631]" /> 1. Vị trí khởi hành / Tỉnh thành (63 Tỉnh Thành)</span>
-                    <button 
-                      type="button" 
-                      onClick={handleDetectGPS}
-                      className="text-[10px] bg-[#1E5631] text-white px-3 py-1 rounded-full flex items-center gap-1 hover:bg-[#2E8B57] transition-all shadow"
-                    >
-                      <Navigation className="w-3 h-3" /> {isDetecting ? 'Đang định vị...' : 'Lấy GPS của tôi'}
-                    </button>
+                  <label className="block text-xs font-bold font-sans-montserrat text-[#1E5631] uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                    <span className="flex items-center gap-1.5"><MapPin className="w-4 h-4 text-[#1E5631]" /> 1. Vị trí khởi hành / Tỉnh thành (34 tỉnh, thành phố)</span>
                   </label>
-                  <select 
-                    onChange={(e) => { if (e.target.value) setCustomLocation(e.target.value); }}
-                    className="w-full p-4 bg-[#FAF6EE] border rounded-2xl font-serif-lora text-sm focus:outline-none focus:border-[#1E5631] mb-2"
-                  >
-                    <option value="">-- Chọn nhanh 1 trong 63 Tỉnh Thành --</option>
-                    <option value="Hà Nội">Hà Nội</option>
-                    <option value="Hải Phòng">Hải Phòng</option>
-                    <option value="Hà Nam">Hà Nam</option>
-                    <option value="Hải Dương">Hải Dương</option>
-                    <option value="Hưng Yên">Hưng Yên</option>
-                    <option value="Nam Định">Nam Định</option>
-                    <option value="Ninh Bình">Ninh Bình</option>
-                    <option value="Thái Bình">Thái Bình</option>
-                    <option value="Vĩnh Phúc">Vĩnh Phúc</option>
-                    <option value="Bắc Ninh">Bắc Ninh</option>
-                    <option value="Bắc Giang">Bắc Giang</option>
-                    <option value="Bắc Kạn">Bắc Kạn</option>
-                    <option value="Cao Bằng">Cao Bằng</option>
-                    <option value="Hà Giang">Hà Giang</option>
-                    <option value="Lạng Sơn">Lạng Sơn</option>
-                    <option value="Phú Thọ">Phú Thọ</option>
-                    <option value="Quảng Ninh">Quảng Ninh</option>
-                    <option value="Thái Nguyên">Thái Nguyên</option>
-                    <option value="Tuyên Quang">Tuyên Quang</option>
-                    <option value="Điện Biên">Điện Biên</option>
-                    <option value="Hòa Bình">Hòa Bình</option>
-                    <option value="Lai Châu">Lai Châu</option>
-                    <option value="Lào Cai">Lào Cai</option>
-                    <option value="Sơn La">Sơn La</option>
-                    <option value="Yên Bái">Yên Bái</option>
-                    <option value="Thanh Hóa">Thanh Hóa</option>
-                    <option value="Nghệ An">Nghệ An</option>
-                    <option value="Hà Tĩnh">Hà Tĩnh</option>
-                    <option value="Quảng Bình">Quảng Bình</option>
-                    <option value="Quảng Trị">Quảng Trị</option>
-                    <option value="Thừa Thiên Huế">Thừa Thiên Huế</option>
-                    <option value="Đà Nẵng">Đà Nẵng</option>
-                    <option value="Quảng Nam">Quảng Nam</option>
-                    <option value="Quảng Ngãi">Quảng Ngãi</option>
-                    <option value="Bình Định">Bình Định</option>
-                    <option value="Phú Yên">Phú Yên</option>
-                    <option value="Khánh Hòa">Khánh Hòa</option>
-                    <option value="Ninh Thuận">Ninh Thuận</option>
-                    <option value="Bình Thuận">Bình Thuận</option>
-                    <option value="Đắk Lắk">Đắk Lắk</option>
-                    <option value="Đắk Nông">Đắk Nông</option>
-                    <option value="Gia Lai">Gia Lai</option>
-                    <option value="Kon Tum">Kon Tum</option>
-                    <option value="Lâm Đồng">Lâm Đồng</option>
-                    <option value="Bà Rịa - Vũng Tàu">Bà Rịa - Vũng Tàu</option>
-                    <option value="Bình Dương">Bình Dương</option>
-                    <option value="Bình Phước">Bình Phước</option>
-                    <option value="Đồng Nai">Đồng Nai</option>
-                    <option value="TP. Hồ Chí Minh">TP. Hồ Chí Minh (Sài Gòn)</option>
-                    <option value="Tây Ninh">Tây Ninh</option>
-                    <option value="An Giang">An Giang</option>
-                    <option value="Bạc Liêu">Bạc Liêu</option>
-                    <option value="Bến Tre">Bến Tre</option>
-                    <option value="Cà Mau">Cà Mau</option>
-                    <option value="Cần Thơ">Cần Thơ</option>
-                    <option value="Đồng Tháp">Đồng Tháp</option>
-                    <option value="Hậu Giang">Hậu Giang</option>
-                    <option value="Kiên Giang">Kiên Giang</option>
-                    <option value="Long An">Long An</option>
-                    <option value="Sóc Trăng">Sóc Trăng</option>
-                    <option value="Tiền Giang">Tiền Giang</option>
-                    <option value="Trà Vinh">Trà Vinh</option>
-                    <option value="Vĩnh Long">Vĩnh Long</option>
-                  </select>
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    <button
+                      type="button"
+                      onClick={handleDetectGPS}
+                      disabled={isDetecting}
+                      className={`p-4 rounded-2xl border-2 text-left transition-all ${locMode === 'gps' ? 'border-[#1E5631] bg-[#1E5631]/5 text-[#1E5631]' : 'border-[#D4B872]/30 text-[#2C221E]/70 hover:bg-[#D4B872]/10'}`}
+                    >
+                      <span className="flex items-center gap-2 font-bold text-xs"><Navigation className="w-4 h-4" /> {isDetecting ? 'Đang lấy GPS...' : 'Dùng GPS'}</span>
+                      <span className="block mt-1 text-[10px] font-normal opacity-70">Lấy vị trí hiện tại</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLocMode('manual')}
+                      className={`p-4 rounded-2xl border-2 text-left transition-all ${locMode === 'manual' ? 'border-[#1E5631] bg-[#1E5631]/5 text-[#1E5631]' : 'border-[#D4B872]/30 text-[#2C221E]/70 hover:bg-[#D4B872]/10'}`}
+                    >
+                      <span className="flex items-center gap-2 font-bold text-xs"><MapPin className="w-4 h-4" /> Tự nhập địa điểm</span>
+                      <span className="block mt-1 text-[10px] font-normal opacity-70">Chọn tỉnh hoặc nhập địa chỉ</span>
+                    </button>
+                  </div>
+                  {locMode === 'gps' ? (
+                    <div className="p-4 bg-[#FAF6EE] border rounded-2xl font-serif-lora text-sm text-[#1E5631]">
+                      <span className="font-bold">Vị trí khởi hành:</span> {customLocation}
+                    </div>
+                  ) : <>
+                  
                   <input 
                     type="text" 
                     value={customLocation} 
@@ -2059,6 +2586,7 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                     placeholder="Hoặc nhập địa điểm cụ thể (VD: Quận 1, Sài Gòn / Phố Cổ Hà Nội)..." 
                     className="w-full p-4 bg-[#FAF6EE] border rounded-2xl font-serif-lora text-sm focus:outline-none focus:border-[#1E5631]"
                   />
+                  </>}
                 </div>
 
                 <div>
@@ -2098,6 +2626,14 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                 </div>
 
                 <div>
+                  <label className="block text-xs font-bold font-sans-montserrat text-[#1E5631] uppercase tracking-wider mb-2">Số ngày trải nghiệm</label>
+                  <select value={customDays} onChange={(event) => setCustomDays(Number(event.target.value))} className="w-full rounded-2xl border bg-[#FAF6EE] p-4 font-serif-lora text-sm">
+                    <option value={1}>1 ngày</option><option value={2}>2 ngày</option><option value={3}>3 ngày</option>
+                  </select>
+                  <p className="mt-1 text-xs text-[#2C221E]/60">Xem đầy đủ các ngày trong lịch trình AI sau khi tạo.</p>
+                </div>
+
+                <div>
                   <label className="block text-xs font-bold font-sans-montserrat text-[#1E5631] uppercase tracking-wider mb-2 flex items-center justify-between">
                     <span className="flex items-center gap-1.5"><DollarSign className="w-4 h-4 text-[#1E5631]" /> 4. Ngân sách dự kiến</span>
                     <span className="text-sm font-black text-[#1E5631]">{Number(customBudgetVal).toLocaleString('vi-VN')}đ</span>
@@ -2112,9 +2648,9 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                     className="w-full accent-[#1E5631] cursor-pointer"
                   />
                   <div className="flex justify-between text-[10px] text-[#2C221E]/60 font-sans-montserrat mt-1">
-                    <span>50.000đ (Bình dân)</span>
-                    <span>500.000đ (Đặc sản)</span>
-                    <span>1.000.000đ+ (Sang trọng)</span>
+                    <span>50.000đ</span>
+                    <span>500.000đ</span>
+                    <span>1.000.000đ+</span>
                   </div>
                 </div>
 
@@ -2160,15 +2696,40 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
         {step === 'render-details' && (
           <div className="space-y-12 max-w-7xl mx-auto py-12 animate-motion-fadeIn">
             <div className="flex flex-col md:flex-row items-center justify-between bg-white p-8 rounded-[35px] border border-[#D4B872]/30 shadow-sm gap-4">
-              <div>
+                <div className="min-w-0 flex-1">
                 <button onClick={() => changeStep('themed-tour')} className="text-[10px] font-black font-sans-montserrat uppercase tracking-widest text-[#8B0000] hover:underline flex items-center gap-1 mb-2"><ArrowLeft className="w-4 h-4" /> Quay lại</button>
                 <h2 className="font-serif-playfair text-4xl font-black text-[#8B0000]">{activeTour.title}</h2>
                 <p className="font-serif-lora text-xs text-[#2C221E]/70 italic mt-1">{activeTour.desc}</p>
               </div>
-              <button onClick={() => changeStep('checkout')} className="bg-[#D4B872] hover:bg-[#C2A55F] text-[#2C221E] font-sans-poppins font-bold px-8 py-4 rounded-2xl shadow transition-all flex items-center gap-2 text-sm focus-ring-accessible">
-                <Calendar className="w-4 h-4" /> Đặt Chỗ Ngay
-              </button>
+              <div className="print-hidden flex flex-wrap items-center gap-2">
+        {paidBookingConfirmation && <div role="status" className="mb-6 rounded-2xl border border-[#1E5631]/20 bg-green-50 p-4 text-sm text-[#1E5631]">TasteTrip đã xác nhận thanh toán đơn <strong>{paidBookingConfirmation.id}</strong> cho ngày <strong>{new Date(`${paidBookingConfirmation.date}T00:00:00`).toLocaleDateString('vi-VN')}</strong> ({paidBookingConfirmation.guests} khách). Đây là lịch trình cụ thể của tour bạn đã đặt.</div>}
+                <button type="button" onClick={toggleSaveActiveTour} aria-pressed={activeTour.id === 'custom-tour-result' ? activeCustomSaved : savedTourIds.includes(activeTour.id)} className="inline-flex items-center gap-2 rounded-xl border border-[#D4B872]/50 bg-[#FAF6EE] px-4 py-3 text-xs font-bold text-[#8B0000] hover:bg-[#D4B872]/20">
+                  <Bookmark className={`h-4 w-4 ${(activeTour.id === 'custom-tour-result' ? activeCustomSaved : savedTourIds.includes(activeTour.id)) ? 'fill-current' : ''}`} />
+                  {(activeTour.id === 'custom-tour-result' ? activeCustomSaved : savedTourIds.includes(activeTour.id)) ? 'Đã lưu' : 'Lưu lịch trình'}
+                </button>
+                <button type="button" disabled={shareLoading} onClick={shareActiveTour} className="inline-flex items-center gap-2 rounded-xl border border-[#D4B872]/50 bg-[#FAF6EE] px-4 py-3 text-xs font-bold text-[#8B0000] hover:bg-[#D4B872]/20 disabled:opacity-60">
+                  <Share2 className="h-4 w-4" /> Chia sẻ
+                </button>
+                <button type="button" onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-xl border border-[#D4B872]/50 bg-[#FAF6EE] px-4 py-3 text-xs font-bold text-[#8B0000] hover:bg-[#D4B872]/20">
+                  <Printer className="h-4 w-4" /> In lịch trình
+                </button>
+              </div>
             </div>
+
+            {sharedItineraryLoading && <p role="status" className="rounded-xl bg-white p-4 text-sm text-[#1E5631]">Đang tải lịch trình được chia sẻ…</p>}
+
+            {isMultiDayItinerary && <nav aria-label="Chọn ngày trong lịch trình" className="print-hidden flex flex-wrap gap-2 rounded-2xl border border-[#D4B872]/30 bg-white p-3">
+              {Array.from({ length: itineraryDayCount }, (_, index) => index + 1).map((day) => {
+                const locked = day > 1 && unlockedTourId !== activeTour.id;
+                return <button key={day} type="button" aria-pressed={selectedItineraryDay === day} onClick={() => {
+                  setSelectedItineraryDay(day);
+                  const firstStop = activeTour.stops.findIndex((stop) => (stop.day || 1) === day);
+                  if (firstStop >= 0) setActiveStopIndex(firstStop);
+                }} className={`rounded-xl px-5 py-3 text-sm font-bold ${selectedItineraryDay === day ? 'bg-[#8B0000] text-white' : 'bg-[#FAF6EE] text-[#8B0000] hover:bg-[#D4B872]/20'}`}>
+                  Ngày {day}{locked ? ' 🔒' : day === 1 ? ' · Miễn phí' : ''}
+                </button>;
+              })}
+            </nav>}
 
             {/* DASHBOARD TỔNG KẾT HÀNH TRÌNH (KHỐI 4.3) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -2178,7 +2739,7 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                 </div>
                 <div>
                   <div className="text-[10px] font-bold font-sans-montserrat text-[#2C221E]/60 uppercase tracking-widest">Tổng Quãng Đường</div>
-                  <div className="text-2xl font-black font-sans-montserrat text-[#8B0000]">{activeTour.totalDistance || '2.4 km'}</div>
+                  <div className="text-2xl font-black font-sans-montserrat text-[#8B0000]">{selectedDayIsLocked ? '🔒 Đã khóa' : isMultiDayItinerary ? `${selectedDayStops.length} điểm · Ngày ${selectedItineraryDay}` : activeTour.totalDistance || '2.4 km'}</div>
                   <div className="text-[10px] text-[#1E5631] font-semibold">✓ Đã lọc trong bán kính tối đa</div>
                 </div>
               </div>
@@ -2188,9 +2749,9 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                   <DollarSign className="w-7 h-7" />
                 </div>
                 <div>
-                  <div className="text-[10px] font-bold font-sans-montserrat text-[#2C221E]/60 uppercase tracking-widest">Tổng Chi Phí Dự Kiến</div>
-                  <div className="text-2xl font-black font-sans-montserrat text-[#8B0000]">{activeTour.totalCost || '290.000đ'}</div>
-                  <div className="text-[10px] text-[#1E5631] font-semibold">✓ Khớp ngân sách lựa chọn</div>
+                  <div className="text-[10px] font-bold font-sans-montserrat text-[#2C221E]/60 uppercase tracking-widest">Tiền ăn tham khảo / người</div>
+                  <div className="text-2xl font-black font-sans-montserrat text-[#8B0000]">{currentDayFoodCost ? `${currentDayFoodCost.toLocaleString('vi-VN')}đ / người` : 'Chưa có dữ liệu giá'}</div>
+                  <div className="text-[10px] text-[#2C221E]/60">{selectedDayStops.filter((stop) => stop.priceNum || Number(String(stop.price || '').replace(/\D/g, ''))).length}/{selectedDayStops.length} điểm có giá · chưa gồm di chuyển.</div>
                 </div>
               </div>
             </div>
@@ -2199,6 +2760,7 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
               
               {/* TIMELINE, CULTURE, MENU */}
               <div className="lg:col-span-2 space-y-8">
+                {<>
                 <div className="bg-white p-8 rounded-[40px] border border-[#D4B872]/30 shadow-sm space-y-6">
                   <div className="flex items-center justify-between border-b pb-4">
                     <h3 className="font-serif-playfair font-bold text-xl text-[#8B0000] flex items-center gap-2">
@@ -2208,10 +2770,12 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                   </div>
 
                   <div className="space-y-8 relative before:absolute before:top-4 before:bottom-4 before:left-5 before:w-0.5 before:bg-[#D4B872]/40">
-                    {activeTour.stops.map((stop, idx) => (
-                      <div key={idx} className="relative flex gap-6 items-start pl-2">
+                    {selectedDayStops.map((stop, dayStopIndex) => {
+                      const idx = activeTour.stops.indexOf(stop);
+                      const stopVouchers = partnerVouchers.filter((voucher) => voucher.stopIndex === idx && voucher.tourId === activeTour.id);
+                      return <div key={idx} className="relative flex gap-6 items-start pl-2">
                         <div className="w-9 h-9 rounded-full bg-[#8B0000] text-[#D4B872] font-black text-xs flex items-center justify-center shrink-0 z-10 shadow border border-[#D4B872]">
-                          {idx + 1}
+                          {dayStopIndex + 1}
                         </div>
                         <div className="bg-[#FAF6EE] rounded-[30px] p-6 border border-[#D4B872]/20 flex-1 space-y-4 shadow-sm">
                           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2224,36 +2788,76 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                           </div>
 
                           <div className="space-y-3">
-                            <h4 className="font-serif-playfair font-bold text-xl text-[#8B0000]">{stop.name}</h4>
-                            <p className="font-serif-lora text-xs text-[#2C221E]/60">{stop.address}</p>
-                            <p className="font-sans-montserrat text-xs font-bold text-[#8B0000]">{stop.price} • {stop.category}</p>
+                            <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1">
+                              <h4 className="font-serif-playfair font-bold text-2xl text-[#8B1E1E]">{stop.name}</h4>
+                              <span className="font-sans text-sm font-extrabold text-[#8B1E1E]">{stop.price}</span>
+                            </div>
+                            <a
+                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(stop.name + ' ' + stop.address)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 text-xs text-[#6B5E57] hover:text-[#8B1E1E] hover:underline transition-colors group"
+                              title="Xem vị trí trên Google Maps"
+                            >
+                              <MapPin className="w-3.5 h-3.5 text-[#8B1E1E] shrink-0 group-hover:scale-110 transition-transform" />
+                              <span>{stop.address}</span>
+                              <span className="text-[10px] text-[#C59B4B] bg-[#C59B4B]/10 px-2 py-0.5 rounded-full font-semibold ml-1">Chỉ đường ↗</span>
+                            </a>
+                            {stopVouchers.length > 0 ? <div className="space-y-2" aria-label="Ưu đãi đối tác tại điểm ăn này">
+                              {stopVouchers.map((voucher) => <div key={voucher.id} className="rounded-2xl border border-[#1E5631]/20 bg-white p-4">
+                                <p className="text-[10px] font-bold uppercase tracking-wide text-[#1E5631]">Ưu đãi đối tác · {voucher.restaurantName}</p>
+                                <p className="mt-1 text-sm font-bold text-[#8B0000]">{voucher.title}: {voucher.benefit}</p>
+                                {voucher.terms && <p className="mt-1 text-xs text-[#2C221E]/65">{voucher.terms}</p>}
+                                <div className="mt-2 flex items-center justify-between gap-2"><code className="text-xs font-bold text-[#8B0000]">{voucher.code}</code><button type="button" onClick={() => handleCopyVoucherCode(voucher.code)} className="rounded-lg bg-[#1E5631] px-3 py-2 text-xs font-bold text-white">Sao chép mã</button></div>
+                              </div>)}
+                            </div> : <p className="inline-flex rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-[#2C221E]/60">Chưa có ưu đãi</p>}
                             
-                            {/* UI_Culture */}
-                            <div className="text-xs bg-white p-4 rounded-2xl border border-[#D4B872]/40 text-[#2C221E] space-y-1 shadow-sm leading-relaxed">
-                              <span className="font-bold font-sans-montserrat text-[#8B0000] block mb-1">💡 Câu chuyện văn hóa:</span> 
-                              <span>{stop.cultureStory || 'Món ăn truyền thống đặc sắc mang đậm bản sắc văn hóa ẩm thực địa phương.'}</span>
+                            {/* 1. Câu chuyện văn hóa & Di sản */}
+                            <div className="text-xs bg-white p-4.5 rounded-2xl border border-[#C59B4B]/30 text-[#2C221E] space-y-1.5 shadow-sm leading-relaxed">
+                              <span className="font-bold font-sans text-[#8B1E1E] flex items-center gap-1.5 mb-1 text-[11px] uppercase tracking-wider">
+                                <BookOpen className="w-3.5 h-3.5 text-[#C59B4B]" />
+                                💡 Câu chuyện văn hóa & Di sản:
+                              </span> 
+                              <p className="text-[#2C221E]/85 pl-4 border-l-2 border-[#8B1E1E]/30 leading-relaxed">{stop.cultureStory || 'Món ăn truyền thống đặc sắc mang đậm bản sắc văn hóa ẩm thực địa phương.'}</p>
                             </div>
-                            <div className="text-xs bg-[#1E5631]/10 p-4 rounded-2xl border border-[#1E5631]/20 text-[#1E5631] space-y-1 shadow-sm leading-relaxed">
-                              <span className="font-bold font-sans-montserrat block mb-1">✨ Mẹo thưởng thức chuẩn vị:</span> 
-                              <span>{stop.tastingTip || 'Thưởng thức khi còn nóng hổi cùng các gia vị kèm theo để cảm nhận trọn vẹn hương vị.'}</span>
+
+                            {/* 2. Mẹo thưởng thức chuẩn vị */}
+                            <div className="text-xs bg-[#1C4329]/5 p-4.5 rounded-2xl border border-[#1C4329]/20 text-[#2C221E] space-y-1.5 shadow-sm leading-relaxed">
+                              <span className="font-bold font-sans text-[#1C4329] flex items-center gap-1.5 mb-1 text-[11px] uppercase tracking-wider">
+                                <Utensils className="w-3.5 h-3.5 text-[#1C4329]" />
+                                ✨ Mẹo thưởng thức chuẩn vị:
+                              </span> 
+                              <p className="text-[#2C221E]/85 pl-4 border-l-2 border-[#1C4329]/40 leading-relaxed">{stop.tastingTip || 'Thưởng thức khi còn nóng hổi cùng các gia vị kèm theo để cảm nhận trọn vẹn hương vị.'}</p>
                             </div>
+
+                            {/* 3. Thực đơn tiếng Anh quốc tế */}
+                            {stop.englishMenu && (
+                              <div className="text-xs bg-[#FAF7F2] p-4.5 rounded-2xl border border-[#C59B4B]/35 text-[#2C221E] space-y-1.5 shadow-sm leading-relaxed">
+                                <span className="font-bold font-sans text-[#8B1E1E] flex items-center gap-1.5 mb-1 text-[11px] uppercase tracking-wider">
+                                  <Globe className="w-3.5 h-3.5 text-[#C59B4B]" />
+                                  🌐 International English Menu:
+                                </span> 
+                                <p className="italic text-[#2C221E]/80 pl-4 border-l-2 border-[#C59B4B]/50 font-serif-playfair text-[13px]">{stop.englishMenu}</p>
+                              </div>
+                            )}
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      </div>;
+                    })}
                   </div>
                 </div>
+                </>}
               </div>
 
               {/* ROADMAP & ACTION MENU */}
-              <div className="space-y-8">
-                <div className="bg-white p-6 rounded-[35px] border border-[#D4B872]/30 shadow-sm space-y-4">
+              <div className="print-hidden space-y-8">
+                {selectedDayIsLocked ? <div className="rounded-[30px] border border-[#D4B872]/40 bg-white p-6 text-center text-sm text-[#2C221E]/70">Lộ trình và địa chỉ của ngày này sẽ hiện sau khi mở khóa.</div> : <div className="bg-white p-6 rounded-[35px] border border-[#D4B872]/30 shadow-sm space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="font-serif-playfair font-bold text-base text-[#8B0000] flex items-center gap-2">
                       <Navigation className="w-4 h-4 text-[#D4B872]" /> Roadmap Dẫn Đường
                     </h3>
                     <span className="text-[10px] font-black font-sans-montserrat bg-[#8B0000]/10 text-[#8B0000] px-3 py-1 rounded-full">
-                      {activeStopIndex + 1} / {activeTour.stops.length}
+                      {selectedDayActiveStopPosition + 1} / {selectedDayStops.length}
                     </span>
                   </div>
 
@@ -2268,15 +2872,15 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
 
                     <div className="flex items-center gap-2 pt-1">
                       <button 
-                        onClick={() => setActiveStopIndex(prev => Math.max(0, prev - 1))}
-                        disabled={activeStopIndex === 0}
+                        onClick={() => setActiveStopIndex(prev => Math.max(selectedDayFirstStopIndex, prev - 1))}
+                        disabled={selectedDayActiveStopPosition === 0}
                         className="flex-1 bg-white hover:bg-gray-50 text-[#8B0000] border border-[#8B0000]/30 py-2.5 rounded-xl text-xs font-bold disabled:opacity-40 transition-colors"
                       >
                         ← Điểm trước
                       </button>
                       <button 
-                        onClick={() => setActiveStopIndex(prev => Math.min(activeTour.stops.length - 1, prev + 1))}
-                        disabled={activeStopIndex === activeTour.stops.length - 1}
+                        onClick={() => setActiveStopIndex(prev => Math.min(selectedDayFirstStopIndex + selectedDayStops.length - 1, prev + 1))}
+                        disabled={selectedDayActiveStopPosition >= selectedDayStops.length - 1}
                         className="flex-1 bg-[#8B0000] hover:bg-[#A52A2A] text-white py-2.5 rounded-xl text-xs font-bold disabled:opacity-40 transition-colors"
                       >
                         Điểm tiếp →
@@ -2291,25 +2895,63 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                     >
                       <Navigation className="w-3.5 h-3.5" /> Mở Google Maps Dẫn Đường
                     </a>
+                    <a href={getFullRouteUrl({ ...activeTour, stops: selectedDayStops })} target="_blank" rel="noreferrer" className="w-full border border-[#1E5631]/30 bg-white text-[#1E5631] text-xs font-sans-poppins font-bold py-3 px-4 rounded-xl transition-colors flex items-center justify-center gap-2 hover:bg-[#1E5631]/5 focus-ring-accessible text-center">
+                      <MapPinned className="w-3.5 h-3.5" /> Mở cả tuyến trên Google Maps
+                    </a>
                   </div>
-                </div>
+                </div>}
 
-                {/* ACTION MENU */}
-                <div className="bg-gradient-to-br from-[#8B0000] to-[#5C0000] p-8 rounded-[40px] text-[#FAF6EE] shadow-xl space-y-6 border border-[#D4B872]/50">
-                  <h3 className="font-serif-playfair font-bold text-2xl text-[#D4B872]">Thao Tác Lộ Trình</h3>
-                  <p className="font-serif-lora text-xs text-[#FAF6EE]/80 italic">Xác nhận đặt tour hoặc quay về trang khám phá.</p>
-                  
+                {!selectedDayIsLocked && partnerVouchers.some((voucher) => voucher.stopIndex === null) && <section className="rounded-[30px] border border-[#D4B872]/50 bg-[#FAF6EE] p-6 shadow-sm" aria-labelledby="partner-vouchers-title">
+                  <div className="mb-4">
+                    <p className="text-xs font-bold text-[#1E5631]">Ưu đãi do quán xác nhận</p>
+                    <h3 id="partner-vouchers-title" className="mt-1 font-serif-playfair text-xl font-bold text-[#8B0000]">Quyền lợi trên tuyến này</h3>
+                  </div>
                   <div className="space-y-3">
-                    <button onClick={() => changeStep('checkout')} className="w-full bg-[#D4B872] text-[#2C221E] hover:bg-[#C2A55F] font-sans-poppins font-bold py-4 rounded-2xl shadow text-xs transition-colors focus-ring-accessible">
-                      Đặt Tour Trải Nghiệm
-                    </button>
-                    <button onClick={handleHoldTour} className="w-full bg-[#1E5631]/30 hover:bg-[#1E5631]/50 text-[#FAF6EE] border border-[#1E5631]/60 font-sans-poppins font-bold py-4 rounded-2xl shadow text-xs transition-colors flex items-center justify-center gap-2 focus-ring-accessible">
-                      Giữ Chỗ Miễn Phí 24h
-                    </button>
-                    <button onClick={() => changeStep('main-menu')} className="w-full bg-transparent text-[#FAF6EE] hover:bg-white/10 font-sans-poppins font-bold py-4 rounded-2xl border border-[#D4B872]/50 text-xs transition-colors focus-ring-accessible">
-                      Quay lại
-                    </button>
+                    {partnerVouchers.filter((voucher) => voucher.stopIndex === null).map((voucher) => <article key={voucher.id} className="rounded-2xl border border-[#D4B872]/30 bg-white p-4">
+                      <p className="text-xs font-bold text-[#1E5631]">{voucher.restaurantName}</p>
+                      <h4 className="mt-1 font-serif-playfair font-bold text-[#8B0000]">{voucher.title}</h4>
+                      <p className="mt-2 text-sm font-semibold">{voucher.benefit}</p>
+                      {voucher.terms && <p className="mt-1 text-xs leading-relaxed text-[#2C221E]/65">{voucher.terms}</p>}
+                      <p className="mt-2 text-[11px] text-[#2C221E]/55">Có hiệu lực đến {new Date(`${voucher.validTo}T00:00:00`).toLocaleDateString('vi-VN')}</p>
+                      <div className="mt-3 flex items-center justify-between gap-2 rounded-xl bg-[#FAF6EE] px-3 py-2">
+                        <code className="break-all text-xs font-bold text-[#8B0000]">{voucher.code}</code>
+                        <button type="button" onClick={() => handleCopyVoucherCode(voucher.code)} className="shrink-0 rounded-lg bg-[#1E5631] px-3 py-2 text-xs font-bold text-white hover:bg-[#2E8B57] focus-ring-accessible">Sao chép mã</button>
+                      </div>
+                    </article>)}
                   </div>
+                  {voucherNotice && <p role="status" className="mt-3 text-xs text-[#1E5631]">{voucherNotice}</p>}
+                </section>}
+
+                {tourActionNotice && <p role="status" className="rounded-2xl border border-[#1E5631]/20 bg-[#1E5631]/5 p-4 text-xs text-[#1E5631]">{tourActionNotice}</p>}
+
+                <section className="space-y-4 rounded-[30px] border border-[#D4B872]/40 bg-white p-6 shadow-sm" aria-labelledby="next-actions-title">
+                  <h3 id="next-actions-title" className="font-serif-playfair text-2xl font-bold text-[#8B0000]">Gợi ý cho chuyến đi</h3>
+                  {[
+                    { title: 'Nơi nghỉ chân', description: activeProvinceId && PARTNER_DESTINATION_NAMES[activeProvinceId] ? `Tìm chốn nghỉ thuận tiện để thong thả khám phá ${PARTNER_DESTINATION_NAMES[activeProvinceId]}.` : 'Tìm chốn nghỉ thuận tiện cho hành trình của bạn.', category: 'hotel' as const, links: activeHotelLinks, providers: ['Traveloka', 'Trip.com', 'Agoda', 'Booking.com', 'Go2Joy'], placement: 'hotel' as const },
+                    { title: 'Lên đường', description: activeProvinceId && PARTNER_DESTINATION_NAMES[activeProvinceId] ? `Chọn ${PARTNER_DESTINATION_NAMES[activeProvinceId]} làm điểm đến và ngày đi; bạn có thể bổ sung nơi khởi hành sau.` : 'Chọn điểm đến và ngày đi; nơi khởi hành có thể bổ sung sau.', category: 'transport' as const, links: activeTransportLinks, providers: ['Traveloka', 'Trip.com', 'Klook'], placement: 'transport' as const },
+                    { title: 'Khám phá cùng người bản địa', description: 'Chọn tour và hoạt động có hướng dẫn để cảm nhận thêm nét riêng của vùng đất.', category: 'tour' as const, links: activeTourLinks, providers: ['Klook'], placement: 'guided_tour' as const },
+                  ].map((group) => <article key={group.title} className="rounded-2xl border border-[#D4B872]/30 bg-[#FAF6EE] p-4">
+                    <h4 className="font-serif-playfair text-lg font-bold text-[#8B0000]">{group.title}</h4>
+                    <p className="mt-1 text-xs text-[#2C221E]/70">{group.description}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {group.providers.map((partner) => {
+                        const affiliateLink = group.links.find((link) => link.partner === partner);
+                        const publicWebsite = PARTNER_PUBLIC_WEBSITES[partner];
+                        if (!publicWebsite) return null;
+                        const categoryUrl = getPartnerCategoryUrl(partner, group.category, activeProvinceId);
+                        const href = affiliateLink?.url || categoryUrl || publicWebsite.url;
+                        return <a key={`${group.title}-${partner}`} href={href} target="_blank" rel={affiliateLink ? 'sponsored noopener noreferrer' : 'noopener noreferrer'} onClick={() => { if (affiliateLink && activeProvinceId) void logAffiliateClick(partner, activeProvinceId, group.placement); }} aria-label={`Mở ${partner} trong nhóm ${group.title}`} className="inline-flex items-center gap-2 rounded-xl border border-[#D4B872]/50 bg-white px-3 py-2.5 text-xs font-bold text-[#2C221E] shadow-sm hover:border-[#8B0000]/40 hover:bg-[#FAF6EE]">
+                          <img src={`https://www.google.com/s2/favicons?domain=${publicWebsite.logoDomain}&sz=64`} alt={`Logo ${partner}`} loading="lazy" className="h-7 w-7 rounded-md object-contain" />
+                          <span>{partner}</span>
+                        </a>;
+                      })}
+                    </div>
+                  </article>)}
+                  {activeHotelLinks.length + activeTransportLinks.length + activeTourLinks.length > 0 && <p className="text-[11px] leading-relaxed text-[#2C221E]/60">Liên kết đối tác: TasteTrip có thể nhận hoa hồng khi bạn đặt qua link này, giá không đổi với bạn.</p>}
+                </section>
+
+                <div className="rounded-2xl border border-[#D4B872]/30 bg-white p-4">
+                  <button onClick={() => changeStep('themed-tour')} className="w-full rounded-xl border border-[#D4B872]/50 px-4 py-3 text-xs font-bold text-[#8B0000] hover:bg-[#FAF6EE]">Quay lại</button>
                 </div>
               </div>
 
@@ -2317,128 +2959,333 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
           </div>
         )}
 
-        {/* CHECKOUT */}
+        {/* ADMIN BOOKINGS */}
+        {step === 'admin' && (
+          <section className="max-w-5xl mx-auto px-5 sm:px-8 py-12 my-12">
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
+              <div>
+                <p className="text-xs uppercase tracking-widest font-bold text-[#1E5631]">TasteTrip</p>
+                <h2 className="font-serif-playfair text-3xl sm:text-4xl font-bold text-[#8B0000]">Cơ sở dữ liệu TasteTrip</h2>
+              </div>
+              <button onClick={() => changeStep('start')} className="text-sm text-[#8B0000] hover:underline">Về trang chủ</button>
+            </div>
+            {!adminLoggedIn ? (
+              <form onSubmit={handleAdminLogin} className="max-w-lg bg-white p-6 sm:p-8 rounded-3xl shadow border border-[#D4B872]/30 space-y-4">
+                <p className="text-sm text-[#2C221E]/70">Nhập token quản trị trong server/.env để xem dữ liệu SQLite, đơn đặt tour và voucher.</p>
+                <label className="block text-sm font-semibold">Admin token
+                  <input required type="password" autoComplete="current-password" value={adminToken} onChange={(event) => setAdminToken(event.target.value)} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 p-3" />
+                </label>
+                {adminError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{adminError}</p>}
+                <button disabled={adminLoading} className="w-full rounded-xl bg-[#1E5631] px-5 py-3 font-bold text-white disabled:opacity-60">{adminLoading ? 'Đang xác thực...' : 'Đăng nhập quản trị'}</button>
+              </form>
+            ) : (
+              <div className="space-y-5">
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><strong>Đối soát trước khi xác nhận:</strong> kiểm tra sao kê ngân hàng có đúng số tiền báo giá và nội dung <code className="font-bold">TASTETRIP + mã đơn</code>. Chỉ chuyển trạng thái sang “Đã xác nhận đã thu” khi cả hai khớp. Website hiện chưa kết nối API ngân hàng nên bước này do quản trị viên kiểm tra thủ công.</div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button onClick={handleAdminRefresh} disabled={adminLoading} className="rounded-xl bg-[#1E5631] px-4 py-2.5 text-sm font-bold text-white disabled:opacity-60">{adminLoading ? 'Đang tải...' : 'Tải lại dữ liệu'}</button>
+                  <button onClick={() => { setAdminLoggedIn(false); setAdminToken(''); setAdminBookings([]); setAdminVouchers([]); setAdminDatabaseOverview(null); setAffiliateClickReport([]); }} className="rounded-xl border border-[#8B0000]/30 px-4 py-2.5 text-sm font-bold text-[#8B0000]">Đăng xuất</button>
+                  <span className="text-sm text-[#2C221E]/60">{adminBookings.length} yêu cầu</span>
+                </div>
+                <section className="rounded-3xl border border-[#D4B872]/35 bg-white p-5 sm:p-7 shadow-sm space-y-4" aria-labelledby="database-overview-title">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 id="database-overview-title" className="font-serif-playfair text-2xl font-bold text-[#8B0000]">Dữ liệu đang lưu</h3>
+                      <p className="mt-1 text-sm text-[#2C221E]/65">Tổng quan các bảng trong cơ sở dữ liệu {adminDatabaseOverview?.database || 'SQLite'}.</p>
+                    </div>
+                    <span className="rounded-full bg-[#1E5631]/10 px-3 py-1 text-xs font-bold text-[#1E5631]">Chỉ quản trị viên</span>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {(adminDatabaseOverview?.tables || []).map((table) => (
+                      <div key={table.id} className="rounded-2xl border border-[#D4B872]/25 bg-[#FAF6EE] p-4">
+                        <p className="text-sm text-[#2C221E]/70">{table.name}</p>
+                        <strong className="mt-1 block text-2xl text-[#8B0000]">{table.rowCount.toLocaleString('vi-VN')}</strong>
+                        <span className="text-xs text-[#2C221E]/55">bản ghi</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+                <section className="rounded-3xl border border-[#D4B872]/35 bg-white p-5 sm:p-7 shadow-sm space-y-4" aria-labelledby="affiliate-report-title">
+                  <div className="flex flex-wrap items-end justify-between gap-2">
+                    <div>
+                      <h3 id="affiliate-report-title" className="font-serif-playfair text-2xl font-bold text-[#8B0000]">Lượt nhấn liên kết đối tác</h3>
+                      <p className="mt-1 text-sm text-[#2C221E]/65">Thống kê theo đối tác, tỉnh và vị trí nút.</p>
+                    </div>
+                    <strong className="text-xl text-[#1E5631]">{affiliateClickReport.reduce((sum, row) => sum + row.clickCount, 0).toLocaleString('vi-VN')} lượt</strong>
+                  </div>
+                  {affiliateClickReport.length === 0 ? <p className="rounded-xl bg-[#FAF6EE] p-4 text-sm text-[#2C221E]/65">Chưa có lượt nhấn liên kết được ghi nhận.</p> : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[560px] text-left text-sm">
+                        <thead><tr className="border-b border-[#D4B872]/30 text-xs text-[#2C221E]/60"><th className="py-2 pr-4">Đối tác</th><th className="py-2 pr-4">Tỉnh</th><th className="py-2 pr-4">Vị trí</th><th className="py-2 pr-4">Lượt nhấn</th><th className="py-2">Gần nhất</th></tr></thead>
+                        <tbody>{affiliateClickReport.map((row) => (
+                          <tr key={`${row.partner}-${row.provinceId}-${row.placement}`} className="border-b border-[#D4B872]/15 last:border-0">
+                            <td className="py-3 pr-4 font-semibold text-[#8B0000]">{row.partner}</td>
+                            <td className="py-3 pr-4">{THEMED_TOURS.find((tour) => tour.id === (LEGACY_PROVINCE_TO_CURRENT[row.provinceId] || row.provinceId))?.title || row.provinceId}</td>
+                            <td className="py-3 pr-4">{{ primary_tour: 'Nút xem tour', hotel: 'Ở đâu', transport: 'Đến bằng gì', guided_tour: 'Tour có hướng dẫn', assistant_chat: 'Trợ lý AI' }[row.placement] || row.placement}</td>
+                            <td className="py-3 pr-4 font-bold">{row.clickCount.toLocaleString('vi-VN')}</td>
+                            <td className="py-3 text-xs text-[#2C221E]/65">{new Date(row.lastClickedAt).toLocaleString('vi-VN')}</td>
+                          </tr>
+                        ))}</tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+                <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="rounded-2xl bg-white border border-[#D4B872]/30 p-4"><div className="text-xs text-[#2C221E]/60">Đơn mới</div><strong className="text-2xl text-[#8B0000]">{adminBookings.filter((item) => item.status === 'new').length}</strong></div>
+                  <div className="rounded-2xl bg-white border border-[#D4B872]/30 p-4"><div className="text-xs text-[#2C221E]/60">Đã xác nhận</div><strong className="text-2xl text-[#8B0000]">{adminBookings.filter((item) => item.status === 'confirmed').length}</strong></div>
+                  <div className="rounded-2xl bg-white border border-[#D4B872]/30 p-4"><div className="text-xs text-[#2C221E]/60">Đã hoàn thành</div><strong className="text-2xl text-[#8B0000]">{adminBookings.filter((item) => item.status === 'completed').length}</strong></div>
+                  <div className="rounded-2xl bg-white border border-[#D4B872]/30 p-4"><div className="text-xs text-[#2C221E]/60">Đã thu theo xác nhận thủ công</div><strong className="text-lg text-[#1E5631]">{adminBookings.filter((item) => item.paymentStatus === 'paid').reduce((sum, item) => sum + (item.quotedTotalVnd || 0), 0).toLocaleString('vi-VN')} đ</strong></div>
+                </div>                {adminNotice && <p role="status" className="rounded-xl bg-green-50 p-3 text-sm text-green-800">{adminNotice}</p>}
+                {adminError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{adminError}</p>}
+                {adminBookings.length === 0 ? (
+                  <div className="rounded-3xl border border-[#D4B872]/30 bg-white p-8 text-center text-[#2C221E]/70">Chưa có yêu cầu đặt tour.</div>
+                ) : adminBookings.map((booking) => (
+                  <article key={booking.id} className="bg-white p-5 sm:p-7 rounded-3xl shadow border border-[#D4B872]/25 space-y-5">
+                    <div className="flex flex-wrap justify-between gap-3 border-b border-[#D4B872]/20 pb-4">
+                      <div>
+                        <h3 className="font-serif-playfair text-xl font-bold text-[#8B0000]">{booking.tourTitle}</h3>
+                        <p className="mt-1 text-xs text-[#2C221E]/60">Mã {booking.id} · nhận lúc {new Date(booking.createdAt).toLocaleString('vi-VN')}</p>
+                      </div>
+                      <span className="h-fit rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-800">{booking.paymentStatus === 'not_paid' ? 'Chưa thanh toán' : booking.paymentStatus}</span>
+                    </div>
+                    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 text-sm">
+                      <p><strong>Khách:</strong> {booking.customerName}</p>
+                      <p><strong>Điện thoại:</strong> <a className="text-[#1E5631] underline" href={`tel:${booking.phone}`}>{booking.phone}</a></p>
+                      <p><strong>Email:</strong> {booking.email || 'Không cung cấp'}</p>
+                      <p><strong>Ngày đi:</strong> {new Date(`${booking.date}T00:00:00`).toLocaleDateString('vi-VN')}</p>
+                      <p><strong>Số khách:</strong> {booking.guests}</p>
+                      <p><strong>Hình thức:</strong> {booking.kind === 'guided' ? 'Có local guide' : 'Tự túc'}</p>
+                      <p><strong>Ăn uống tham khảo:</strong> {booking.estimatedFoodCostPerPerson?.toLocaleString('vi-VN') || 'Chưa có'} đ/người</p>
+                      <p><strong>Số tiền cần khớp:</strong> {booking.quotedTotalVnd?.toLocaleString('vi-VN') || 'Chưa báo giá'} đ</p>
+                      <p className="break-all"><strong>Nội dung cần khớp:</strong> TASTETRIP{booking.id.replace(/[^a-zA-Z0-9]/g, '')}</p>
+                    </div>
+                    {booking.notes && <p className="rounded-xl bg-[#FAF6EE] p-3 text-sm"><strong>Ghi chú của khách:</strong> {booking.notes}</p>}
+                    <div className="grid sm:grid-cols-3 gap-3">
+                      <label className="text-xs font-semibold">Trạng thái
+                        <select value={booking.status} onChange={(event) => setAdminBookings((current) => current.map((item) => item.id === booking.id ? { ...item, status: event.target.value as BookingStatus } : item))} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 p-3 text-sm">
+                          <option value="new">Mới nhận</option><option value="contacted">Đã liên hệ</option><option value="confirmed">Đã xác nhận</option><option value="completed">Hoàn thành</option><option value="cancelled">Đã hủy</option>
+                        </select>
+                      </label>
+                      <label className="text-xs font-semibold">Giá báo cuối cùng (VNĐ)
+                        <input type="number" min="0" step="1000" value={booking.quotedTotalVnd ?? ''} onChange={(event) => setAdminBookings((current) => current.map((item) => item.id === booking.id ? { ...item, quotedTotalVnd: event.target.value ? Number(event.target.value) : null } : item))} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 p-3 text-sm" placeholder="Chưa báo giá" />
+                      </label>
+                      <label className="text-xs font-semibold">Payment status
+                        <select value={booking.paymentStatus} onChange={(event) => setAdminBookings((current) => current.map((item) => item.id === booking.id ? { ...item, paymentStatus: event.target.value as BookingRecord['paymentStatus'] } : item))} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 p-3 text-sm">
+                          <option value="not_paid">Chưa thanh toán</option><option value="awaiting_payment">Đang đối soát</option><option value="paid">Đã xác nhận đã thu</option><option value="refunded">Đã hoàn tiền</option>
+                        </select>
+                      </label>
+                      <label className="text-xs font-semibold">Guide được phân công
+                        <input maxLength={100} value={booking.guideName || ''} onChange={(event) => setAdminBookings((current) => current.map((item) => item.id === booking.id ? { ...item, guideName: event.target.value } : item))} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 p-3 text-sm" placeholder="Tên local guide" />
+                      </label>
+                      <label className="text-xs font-semibold">Điện thoại guide
+                        <input maxLength={30} value={booking.guidePhone || ''} onChange={(event) => setAdminBookings((current) => current.map((item) => item.id === booking.id ? { ...item, guidePhone: event.target.value } : item))} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 p-3 text-sm" placeholder="Số liên hệ hướng dẫn viên" />
+                      </label>
+                      <label className="text-xs font-semibold">Ghi chú nội bộ
+                        <input maxLength={1000} value={booking.adminNote || ''} onChange={(event) => setAdminBookings((current) => current.map((item) => item.id === booking.id ? { ...item, adminNote: event.target.value } : item))} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 p-3 text-sm" placeholder="Trao đổi với khách, guide..." />
+                      </label>
+                    </div>
+                    <button onClick={() => handleAdminUpdate(booking)} className="rounded-xl bg-[#8B0000] px-5 py-3 text-sm font-bold text-white hover:bg-[#A52A2A]">Lưu cập nhật đơn</button>
+                  </article>
+                ))}
+                <section className="rounded-3xl border border-[#D4B872]/35 bg-white p-5 sm:p-7 shadow-sm space-y-5" aria-labelledby="admin-vouchers-title">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-widest text-[#1E5631]">Đối tác ẩm thực</p>
+                      <h3 id="admin-vouchers-title" className="mt-1 font-serif-playfair text-2xl font-bold text-[#8B0000]">Quản lý voucher</h3>
+                      <p className="mt-1 max-w-2xl text-sm text-[#2C221E]/65">Chỉ nhập quyền lợi và mã đã được quán xác nhận. Voucher đang bật và còn hạn sẽ xuất hiện công khai ở chi tiết tour.</p>
+                    </div>
+                    <span className="rounded-full bg-[#FAF6EE] px-3 py-1 text-xs font-bold text-[#1E5631]">{adminVouchers.filter((voucher) => voucher.active).length} đang bật</span>
+                  </div>
+                  <form onSubmit={handleCreateVoucher} className="grid gap-3 rounded-2xl bg-[#FAF6EE] p-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <label className="text-xs font-semibold sm:col-span-2">Áp dụng cho tour
+                      <select value={voucherDraft.tourId} onChange={(event) => setVoucherDraft((draft) => ({ ...draft, tourId: event.target.value, stopIndex: event.target.value === '*' ? null : 0 }))} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 bg-white p-3 text-sm">
+                        <option value="*">Tất cả tour</option>
+                        {THEMED_TOURS.map((tour) => <option key={tour.id} value={tour.id}>{tour.title}</option>)}
+                      </select>
+                    </label>
+                    {voucherDraft.tourId !== '*' && <label className="text-xs font-semibold sm:col-span-2">Gắn ưu đãi vào điểm ăn
+                      <select value={voucherDraft.stopIndex ?? ''} onChange={(event) => setVoucherDraft((draft) => ({ ...draft, stopIndex: event.target.value === '' ? null : Number(event.target.value) }))} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 bg-white p-3 text-sm">
+                        <option value="">Áp dụng chung cho cả tour</option>
+                        {THEMED_TOURS.find((tour) => tour.id === voucherDraft.tourId)?.stops.map((stop, index) => <option key={`${index}-${stop.name}`} value={index}>{stop.mealType}: {stop.name}</option>)}
+                      </select>
+                    </label>}
+                    <label className="text-xs font-semibold sm:col-span-2">Tên quán
+                      <input required maxLength={120} value={voucherDraft.restaurantName} onChange={(event) => setVoucherDraft((draft) => ({ ...draft, restaurantName: event.target.value }))} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 bg-white p-3 text-sm" placeholder="Tên đối tác đã xác nhận" />
+                    </label>
+                    <label className="text-xs font-semibold sm:col-span-2">Tên ưu đãi
+                      <input required maxLength={160} value={voucherDraft.title} onChange={(event) => setVoucherDraft((draft) => ({ ...draft, title: event.target.value }))} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 bg-white p-3 text-sm" placeholder="Ví dụ: Tặng một đồ uống" />
+                    </label>
+                    <label className="text-xs font-semibold sm:col-span-2">Quyền lợi
+                      <input required maxLength={240} value={voucherDraft.benefit} onChange={(event) => setVoucherDraft((draft) => ({ ...draft, benefit: event.target.value }))} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 bg-white p-3 text-sm" placeholder="Giảm giá hoặc món được tặng" />
+                    </label>
+                    <label className="text-xs font-semibold sm:col-span-2">Mã voucher
+                      <input required maxLength={80} value={voucherDraft.code} onChange={(event) => setVoucherDraft((draft) => ({ ...draft, code: event.target.value }))} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 bg-white p-3 text-sm uppercase" placeholder="Ví dụ: TASTE10" />
+                    </label>
+                    <label className="text-xs font-semibold">Có hiệu lực từ
+                      <input required type="date" value={voucherDraft.validFrom} onChange={(event) => setVoucherDraft((draft) => ({ ...draft, validFrom: event.target.value }))} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 bg-white p-3 text-sm" />
+                    </label>
+                    <label className="text-xs font-semibold">Đến hết ngày
+                      <input required type="date" min={voucherDraft.validFrom} value={voucherDraft.validTo} onChange={(event) => setVoucherDraft((draft) => ({ ...draft, validTo: event.target.value }))} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 bg-white p-3 text-sm" />
+                    </label>
+                    <label className="text-xs font-semibold sm:col-span-2 lg:col-span-3">Điều kiện sử dụng
+                      <input maxLength={500} value={voucherDraft.terms} onChange={(event) => setVoucherDraft((draft) => ({ ...draft, terms: event.target.value }))} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 bg-white p-3 text-sm" placeholder="Ví dụ: Áp dụng cho một hóa đơn, không dùng cùng ưu đãi khác" />
+                    </label>
+                    <button disabled={voucherSubmitting} className="self-end rounded-xl bg-[#1E5631] px-5 py-3 text-sm font-bold text-white hover:bg-[#2E8B57] disabled:opacity-60">{voucherSubmitting ? 'Đang lưu...' : 'Thêm voucher'}</button>
+                  </form>
+                  {adminVouchers.length === 0 ? (
+                    <p className="rounded-2xl border border-dashed border-[#D4B872]/60 p-5 text-center text-sm text-[#2C221E]/65">Chưa có ưu đãi đối tác. Chỉ thêm voucher sau khi quán xác nhận quyền lợi và điều kiện.</p>
+                  ) : (
+                    <div className="grid gap-3 lg:grid-cols-2">
+                      {adminVouchers.map((voucher) => {
+                        const tour = THEMED_TOURS.find((item) => item.id === voucher.tourId);
+                        const tourTitle = voucher.tourId === '*' ? 'Tất cả tour' : tour?.title || 'Tour đã lưu';
+                        const stopTitle = voucher.stopIndex === null ? '' : tour?.stops[voucher.stopIndex]?.name;
+                        return <article key={voucher.id} className="rounded-2xl border border-[#D4B872]/30 p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-[#1E5631]">{voucher.restaurantName} · {tourTitle}{stopTitle ? ` · ${stopTitle}` : ''}</p>
+                              <h4 className="mt-1 font-bold text-[#8B0000]">{voucher.title}</h4>
+                              <p className="mt-1 text-sm">{voucher.benefit}</p>
+                            </div>
+                            <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-bold ${voucher.active ? 'bg-green-50 text-green-800' : 'bg-gray-100 text-gray-600'}`}>{voucher.active ? 'Đang bật' : 'Đã ẩn'}</span>
+                          </div>
+                          <div className="mt-3 space-y-1 text-xs text-[#2C221E]/65">
+                            <p>Mã: <strong className="text-[#2C221E]">{voucher.code}</strong></p>
+                            <p>Hạn: {new Date(`${voucher.validFrom}T00:00:00`).toLocaleDateString('vi-VN')} – {new Date(`${voucher.validTo}T00:00:00`).toLocaleDateString('vi-VN')}</p>
+                            {voucher.terms && <p>Điều kiện: {voucher.terms}</p>}
+                          </div>
+                          <button type="button" onClick={() => handleVoucherActiveChange(voucher)} className="mt-3 rounded-lg border border-[#1E5631]/30 px-3 py-2 text-xs font-bold text-[#1E5631] hover:bg-[#1E5631]/5">{voucher.active ? 'Tạm ẩn voucher' : 'Bật lại voucher'}</button>
+                        </article>;
+                      })}
+                    </div>
+                  )}
+                </section>
+              </div>
+            )}
+          </section>
+        )}
+        {/* BOOKING REQUEST */}
+        {step === 'payment' && (
+          <section className="max-w-2xl mx-auto px-5 sm:px-8 py-12 my-10">
+            <div className="bg-white p-6 sm:p-9 rounded-3xl shadow-xl border border-[#D4B872]/30 space-y-6">
+              <div><p className="text-xs uppercase tracking-widest font-bold text-[#1E5631]">TasteTrip · Đơn đặt tour</p><h2 className="mt-2 font-serif-playfair text-3xl font-bold text-[#8B0000]">Tra cứu đơn đặt tour</h2><p className="mt-2 text-sm text-[#2C221E]/70">Nhập số điện thoại đã dùng khi đặt tour để tìm lại mã đơn và xem lịch trình, trạng thái hoặc thông tin thanh toán.</p></div>
+              <form onSubmit={handleCustomerBookingLookup} className="grid gap-3">
+                <label className="block text-xs font-semibold">Số điện thoại đặt tour<input required type="tel" maxLength={30} value={paymentLookupPhone} onChange={(event) => { setPaymentLookupPhone(event.target.value); setCustomerBookingMatches([]); setCustomerBooking(null); setPaymentLookupError(''); }} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 p-3 text-sm" /></label>
+                <button disabled={paymentLookupLoading} className="rounded-xl bg-[#1E5631] px-5 py-3 font-bold text-white disabled:opacity-60">{paymentLookupLoading ? 'Đang tìm đơn...' : 'Tìm đơn bằng số điện thoại'}</button>
+              </form>
+              {paymentLookupError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{paymentLookupError}</p>}
+              {customerBookingMatches.length > 0 && !customerBooking && <section className="space-y-3" aria-label="Các đơn tìm thấy">
+                <p className="text-sm font-semibold text-[#2C221E]">Tìm thấy {customerBookingMatches.length} đơn gần đây. Chọn đơn để xem mã và chi tiết:</p>
+                {customerBookingMatches.map((booking) => (
+                  <article key={booking.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#D4B872]/30 bg-[#FAF6EE] p-4">
+                    <div className="min-w-0">
+                      <h3 className="font-bold text-[#8B0000]">{booking.tourTitle}</h3>
+                      <p className="mt-1 text-xs text-[#2C221E]/65">{booking.id} · {new Date(`${booking.date}T00:00:00`).toLocaleDateString('vi-VN')} · {booking.guests} khách</p>
+                    </div>
+                    <button type="button" disabled={paymentLookupLoading} onClick={() => handleSelectCustomerBooking(booking)} className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-[#1E5631] shadow-sm disabled:opacity-60">{paymentLookupLoading ? 'Đang tải...' : 'Xem đơn'}</button>
+                  </article>
+                ))}
+              </section>}
+              {customerBooking && <article className="rounded-2xl border border-[#D4B872]/35 bg-[#FAF6EE] p-5 space-y-4">
+                {customerBookingMatches.length > 0 && <button type="button" onClick={() => setCustomerBooking(null)} className="text-sm font-bold text-[#1E5631] hover:underline">Quay lại</button>}
+                <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-serif-playfair text-xl font-bold text-[#8B0000]">{customerBooking.tourTitle}</h3><p className="text-xs text-[#2C221E]/60">Mã {customerBooking.id} · {new Date(`${customerBooking.date}T00:00:00`).toLocaleDateString('vi-VN')} · {customerBooking.guests} khách</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-bold">{customerBooking.status === 'new' ? 'Đang tiếp nhận' : customerBooking.status === 'contacted' ? 'Đang trao đổi' : customerBooking.status === 'confirmed' ? 'Đã xác nhận' : customerBooking.status === 'completed' ? 'Đã hoàn thành' : 'Đã hủy'}</span></div>
+                <section className="rounded-2xl border border-[#D4B872]/25 bg-white p-4 sm:p-5 space-y-3" aria-label="Thông tin tour đã chọn">
+                  <h4 className="font-bold text-[#1E5631]">Thông tin tour bạn đã chọn</h4>
+                  {customerBooking.itinerary.length > 0 ? (
+                    <ol className="space-y-3">
+                      {customerBooking.itinerary.map((stop, index) => (
+                        <li key={`${stop.day || 1}-${index}-${stop.name}`} className="flex gap-3 border-l-2 border-[#D4B872]/60 pl-3">
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold text-[#1E5631]">{stop.day ? `Ngày ${stop.day} · ` : ''}{stop.mealType}{stop.time ? ` · ${stop.time}` : ''}</p>
+                            <p className="font-bold text-[#8B0000]">{stop.name}</p>
+                            {stop.address && <p className="text-xs text-[#2C221E]/65">{stop.address}</p>}
+                            {stop.price && <p className="mt-1 text-xs text-[#2C221E]/65">Giá tham khảo: {stop.price}</p>}
+                          </div>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : customerBooking.tourTitle.startsWith('Mở khóa lịch trình: ') && customerBooking.paymentStatus !== 'paid' ? (
+                    <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Các ngày đã mở khóa sẽ xuất hiện sau khi TasteTrip xác nhận thanh toán.</p>
+                  ) : (
+                    <p className="text-sm text-[#2C221E]/65">Đơn này chưa có danh sách điểm dừng được lưu.</p>
+                  )}
+                </section>
+                <p className="text-sm">Thanh toán: <strong>{customerBooking.paymentStatus === 'paid' ? 'Đã được TasteTrip xác nhận' : customerBooking.paymentStatus === 'awaiting_payment' ? 'Đang chờ TasteTrip đối soát' : customerBooking.paymentStatus === 'refunded' ? 'Đã hoàn tiền' : 'Chưa thanh toán'}</strong></p>
+                {customerBooking.tourTitle.startsWith('Yêu cầu Local Buddy: ') && customerBooking.status !== 'confirmed' && <p className="rounded-xl bg-[#1E5631]/5 p-3 text-sm text-[#1E5631]">Yêu cầu đã được ghi nhận. TasteTrip sẽ xác nhận người dẫn và báo giá trước khi gửi thông tin thanh toán.</p>}
+                {customerBooking.quotedTotalVnd !== null && <p className="text-lg">Tổng báo giá: <strong className="text-[#8B0000]">{customerBooking.quotedTotalVnd.toLocaleString('vi-VN')} đ</strong></p>}
+                {customerBooking.guideName && <p className="text-sm">Local guide: <strong>{customerBooking.guideName}</strong>{customerBooking.guidePhone && <> · <a className="text-[#1E5631] underline" href={`tel:${customerBooking.guidePhone}`}>{customerBooking.guidePhone}</a></>}</p>}
+                {customerBooking.payment && customerBooking.paymentStatus !== 'paid' && customerBooking.paymentStatus !== 'refunded' && <div className="grid sm:grid-cols-[220px_1fr] gap-5 items-center rounded-xl bg-white p-4">
+                  <img src={customerBooking.payment.qrUrl} alt="Mã QR chuyển khoản TasteTrip" className="w-full max-w-[220px] rounded-xl border border-gray-100" />
+                  <div className="space-y-2 text-sm"><h4 className="font-bold text-[#1E5631]">Thông tin thanh toán</h4><p>Ngân hàng: <strong>{customerBooking.payment.bankId || 'Theo QR'}</strong></p><p>Số tài khoản: <strong>{customerBooking.payment.accountNo || 'Quét mã QR'}</strong></p><p>Chủ tài khoản: <strong>{customerBooking.payment.accountName || 'Theo QR'}</strong></p><p>Số tiền: <strong>{customerBooking.payment.amount.toLocaleString('vi-VN')} đ</strong></p><p>Nội dung: <strong className="break-all">{customerBooking.payment.reference}</strong></p><p className="text-xs text-amber-800">Trước khi xác nhận trên ứng dụng ngân hàng, hãy kiểm tra đúng số tiền và nội dung ở trên. Nếu QR không tự điền, nhập thủ công.</p></div>
+                </div>}
+                {!customerBooking.payment && customerBooking.status === 'confirmed' && customerBooking.quotedTotalVnd && <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Đơn đã được báo giá. Thông tin QR chưa được cấu hình; vui lòng liên hệ TasteTrip để nhận hướng dẫn chuyển khoản.</p>}
+                {customerBooking.payment && customerBooking.paymentStatus !== 'paid' && customerBooking.paymentStatus !== 'awaiting_payment' && customerBooking.paymentStatus !== 'refunded' && <button type="button" onClick={handleCustomerPaymentReport} disabled={paymentLookupLoading} className="w-full rounded-xl bg-[#8B0000] px-5 py-3 font-bold text-white disabled:opacity-60">{paymentLookupLoading ? 'Đang gửi yêu cầu...' : 'Yêu cầu đối soát thanh toán'}</button>}
+              {customerBooking.paymentStatus === 'awaiting_payment' && <p role="status" className="rounded-xl bg-green-50 p-3 text-sm text-green-800">TasteTrip đang đối soát giao dịch. Khi xác nhận đúng số tiền và nội dung, lịch trình sẽ tự mở tại đây.</p>}
+              </article>}
+              <button type="button" onClick={() => changeStep('start')} className="text-sm font-bold text-[#8B0000] hover:underline">Về trang chủ</button>
+            </div>
+          </section>
+        )}
+
         {step === 'checkout' && (
-          <div className="max-w-xl mx-auto bg-white p-12 rounded-[40px] shadow-2xl border border-[#D4B872]/20 space-y-8 animate-motion-floatIn my-16">
+          <div className="max-w-xl mx-auto bg-white p-8 sm:p-12 rounded-[40px] shadow-2xl border border-[#D4B872]/20 space-y-7 animate-motion-floatIn my-16">
             <div className="flex items-center justify-between">
-              <button onClick={() => changeStep('render-details')} className="text-[10px] font-black font-sans-montserrat uppercase tracking-widest text-[#8B0000] hover:underline flex items-center gap-1"><ArrowLeft className="w-4 h-4" /> Quay lại</button>
-              <span className="text-[10px] font-black font-sans-montserrat text-[#1E5631] bg-[#1E5631]/10 px-3 py-1 rounded-full">Thanh Toán</span>
+              <button type="button" onClick={() => changeStep('render-details')} className="text-[10px] font-black uppercase tracking-widest text-[#8B0000] hover:underline flex items-center gap-1"><ArrowLeft className="w-4 h-4" /> Quay lại</button>
+              <span className="text-[10px] font-black text-[#1E5631] bg-[#1E5631]/10 px-3 py-1 rounded-full">Thanh toán trực tiếp</span>
             </div>
-
             <div className="text-center space-y-2">
-              <h2 className="font-serif-playfair text-3xl font-bold text-[#8B0000]">Thanh Toán & Đặt Tour</h2>
-              <p className="font-serif-lora text-xs text-[#2C221E]/60 italic">Xác nhận thanh toán để hoàn tất trải nghiệm.</p>
+              <h2 className="font-serif-playfair text-3xl font-bold text-[#8B0000]">{checkoutProduct === 'buddy' ? 'Yêu cầu Local Buddy' : checkoutProduct === 'unlock' ? 'Mở khóa lịch trình' : 'Xác nhận tour & thanh toán'}</h2>
+              <p className="font-serif-lora text-xs text-[#2C221E]/60">{checkoutProduct === 'buddy' ? 'Gửi thông tin để TasteTrip xác nhận hướng dẫn viên. Bạn chưa phải thanh toán ở bước này.' : 'Nhập thông tin một lần. Mã đơn và QR sẽ hiện ngay sau khi tạo đơn.'}</p>
             </div>
+            <div className="bg-[#FAF6EE] p-5 rounded-3xl space-y-3 border border-[#D4B872]/30 text-sm">
+              <div className="flex justify-between gap-4"><span className="text-[#2C221E]/70">Tour:</span><strong className="text-right text-[#8B0000]">{activeTour.title}</strong></div>
+              {checkoutProduct === 'unlock' ? <><div className="flex justify-between"><span className="text-[#2C221E]/70">Quyền lợi:</span><strong>Mở toàn bộ các ngày còn lại</strong></div><div className="border-t border-[#D4B872]/30 pt-3 flex justify-between gap-4 font-bold"><span>Phí mở khóa:</span><strong className="text-[#8B0000]">49.000 đ</strong></div></> : checkoutProduct === 'buddy' ? <><div className="flex justify-between"><span className="text-[#2C221E]/70">Dịch vụ:</span><strong>Local Buddy · Ngày 1</strong></div><div className="border-t border-[#D4B872]/30 pt-3 text-sm">Mức tham khảo 150.000đ/buổi. TasteTrip xác nhận tình trạng người dẫn và báo giá trước khi tạo QR.</div></> : <><div className="flex justify-between"><span className="text-[#2C221E]/70">Điểm dừng:</span><strong>{activeTour.stops.length}</strong></div><div className="border-t border-[#D4B872]/30 pt-3 flex justify-between gap-4"><span>Ăn uống tham khảo:</span><strong className="text-[#8B0000]">{activeTour.totalCost || 'Chưa có dữ liệu'} / người</strong></div><div className="border-t border-[#D4B872]/30 pt-3 flex justify-between gap-4 font-bold"><span>Tổng dự toán ({bookingGuests} khách):</span><strong className="text-[#8B0000]">{estimatedTripTotalVnd.toLocaleString('vi-VN')} đ</strong></div></>}
+</div>
+            {!customerBooking && (
+            <form onSubmit={handleBookingSubmit} className="space-y-4">
 
-            <div className="bg-[#FAF6EE] p-6 rounded-3xl space-y-3 border border-[#D4B872]/30">
-              <div className="flex justify-between text-xs font-serif-lora">
-                <span className="text-[#2C221E]/70">Gói tour:</span>
-                <span className="font-bold text-[#8B0000]">{activeTour.title}</span>
+              {checkoutProduct !== 'unlock' && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="block text-xs font-semibold text-[#2C221E]">{checkoutProduct === 'buddy' ? 'Ngày muốn có Local Buddy' : 'Ngày trải nghiệm'}
+                  <input required type="date" min={new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date())} value={bookingDate} onChange={(event) => setBookingDate(event.target.value)} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 p-3 text-sm" />
+                </label>
+                {checkoutProduct === 'tour' && <label className="block text-xs font-semibold text-[#2C221E]">Số khách (1–20)
+                  <input required type="number" min="1" max="20" value={bookingGuests} onChange={(event) => setBookingGuests(Number(event.target.value))} className="mt-1 w-full rounded-xl border border-[#D4B872]/50 p-3 text-sm" />
+                </label>}
+              </div>}
+              <label className="block text-xs font-semibold text-[#2C221E]">Họ và tên
+                <input required maxLength={100} value={customerName} onChange={(event) => setCustomerName(event.target.value)} autoComplete="name" className="mt-1 w-full rounded-xl border border-[#D4B872]/50 p-3 text-sm" />
+              </label>
+              <div className="block">
+                <label className="block text-xs font-semibold text-[#2C221E]">Số điện thoại
+                  <input required type="tel" maxLength={30} value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} autoComplete="tel" className="mt-1 w-full rounded-xl border border-[#D4B872]/50 p-3 text-sm" />
+                </label>
+                
               </div>
-              <div className="flex justify-between text-xs font-serif-lora">
-                <span className="text-[#2C221E]/70">Số điểm dừng:</span>
-                <span className="font-bold">{activeTour.stops.length || 5} địa điểm</span>
-              </div>
-              <div className="border-t border-[#D4B872]/30 pt-3 flex justify-between font-serif-playfair font-bold text-sm">
-                <span>Tổng chi phí:</span>
-                <span className="text-[#8B0000]">{activeTour.totalCost || '290.000đ'} / người</span>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <button onClick={() => changeStep('finish')} className="w-full bg-[#1E5631] hover:bg-[#2E8B57] text-white py-5 rounded-2xl font-sans-poppins font-bold text-base shadow-xl transition-all flex items-center justify-center gap-2 focus-ring-accessible">
-                <CheckCircle className="w-5 h-5 text-[#D4B872]" /> Thanh Toán Thành Công & Hoàn Tất
-              </button>
-              <button onClick={handleHoldTour} className="w-full bg-[#FAF6EE] hover:bg-[#F3EAD8] text-[#8B0000] border border-[#8B0000]/30 py-4 rounded-2xl font-sans-poppins font-bold text-xs shadow transition-all flex items-center justify-center gap-2 focus-ring-accessible">
-                🛡️ Còn chần chừ? Giữ chỗ trong 24h (Miễn phí)
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* RESERVATION / HOLD 24H */}
-        {step === 'reservation' && (
-          <div className="max-w-xl mx-auto bg-white p-12 rounded-[40px] shadow-2xl border border-[#D4B872]/20 space-y-8 animate-motion-floatIn my-16">
-            <div className="flex items-center justify-between">
-              <button onClick={() => changeStep('render-details')} className="text-[10px] font-black font-sans-montserrat uppercase tracking-widest text-[#8B0000] hover:underline flex items-center gap-1"><ArrowLeft className="w-4 h-4" /> Quay lại</button>
-              <span className="text-[10px] font-black font-sans-montserrat text-amber-800 bg-amber-100 px-3 py-1 rounded-full flex items-center gap-1">
-                <Clock className="w-3 h-3" /> Giữ Chỗ 24 Giờ
-              </span>
-            </div>
-
-            <div className="text-center space-y-2">
-              <div className="w-16 h-16 bg-amber-100 text-amber-800 rounded-full flex items-center justify-center mx-auto shadow border border-amber-300 mb-2">
-                <Clock className="w-8 h-8 animate-pulse" />
-              </div>
-              <h2 className="font-serif-playfair text-3xl font-bold text-[#8B0000]">Giữ Chỗ Thành Công (24h)</h2>
-              <p className="font-serif-lora text-xs text-[#2C221E]/60 italic">
-                Bạn đang phân vân? Chỗ của bạn đã được giữ tạm thời. Vui lòng thanh toán trước khi hết hạn để không bị hủy tour.
-              </p>
-            </div>
-
-            <div className="bg-[#FAF6EE] p-6 rounded-3xl space-y-4 border border-[#D4B872]/30">
-              <div className="flex justify-between text-xs font-serif-lora">
-                <span className="text-[#2C221E]/70">Gói tour đã giữ:</span>
-                <span className="font-bold text-[#8B0000]">{activeTour.title}</span>
-              </div>
-              <div className="flex justify-between text-xs font-serif-lora">
-                <span className="text-[#2C221E]/70">Thời điểm giữ:</span>
-                <span className="font-bold">{holdTimestamp ? new Date(holdTimestamp).toLocaleTimeString() : 'Vừa xong'}</span>
-              </div>
-              <div className="flex justify-between text-xs font-serif-lora">
-                <span className="text-[#2C221E]/70">Thời gian giữ chỗ:</span>
-                <span className="font-bold text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded">Còn 23h 59m (Hạn 24h)</span>
-              </div>
-              <div className="flex justify-between text-xs font-serif-lora">
-                <span className="text-[#2C221E]/70">Trạng thái:</span>
-                <span className="font-bold text-[#1E5631]">
-                  {reservationState === 'held' ? '🛡️ Đang giữ chỗ (Chưa thanh toán)' : reservationState}
-                </span>
-              </div>
-              <div className="border-t border-[#D4B872]/30 pt-3 flex justify-between font-serif-playfair font-bold text-sm">
-                <span>Tổng chi phí:</span>
-                <span className="text-[#8B0000]">{activeTour.totalCost || '290.000đ'}</span>
-              </div>
-            </div>
-
-            <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 text-xs text-amber-900 font-serif-lora space-y-1">
-              <p className="font-bold">⚠️ Quy định giữ chỗ:</p>
-              <p>• Trong vòng 24 giờ, nếu bạn không hoàn tất thanh toán, hệ thống sẽ tự động hủy giữ chỗ.</p>
-              <p>• Nếu bạn thanh toán, đơn hàng sẽ được chuyển sang trạng thái <b>Thanh toán thành công</b>.</p>
-            </div>
-
-            <div className="space-y-3">
-              <button onClick={() => { setReservationState('paid'); changeStep('finish'); }} className="w-full bg-[#1E5631] hover:bg-[#2E8B57] text-white py-4 rounded-2xl font-sans-poppins font-bold text-sm shadow-xl transition-all flex items-center justify-center gap-2 focus-ring-accessible">
-                <CheckCircle className="w-5 h-5 text-[#D4B872]" /> Thanh Toán Ngay (Xác Nhận Đặt Tour)
-              </button>
               
-              <div className="grid grid-cols-2 gap-3">
-                <button onClick={() => { setReservationState('cancelled'); alert('Đã hủy giữ chỗ thành công theo yêu cầu của bạn.'); changeStep('start'); }} className="w-full bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 py-3 rounded-xl font-sans-poppins font-bold text-xs transition-all focus-ring-accessible">
-                  ❌ Hủy Giữ Chỗ
-                </button>
-                <button onClick={() => { setReservationState('cancelled'); alert('⚠️ Mô phỏng: Đã qua 24h mà không thanh toán -> Chỗ giữ đã bị tự động hủy!'); changeStep('start'); }} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 py-3 rounded-xl font-sans-poppins font-bold text-xs transition-all focus-ring-accessible">
-                  ⏱️ Giả Lập Hết Hạn 24h
-                </button>
+              {bookingError && <p ref={bookingErrorRef} role="alert" aria-live="assertive" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800">{bookingError}</p>}
+              <button type="submit" disabled={bookingSubmitting} className="w-full bg-[#1E5631] hover:bg-[#2E8B57] disabled:opacity-60 text-white py-4 rounded-2xl font-sans-poppins font-bold text-sm shadow-xl transition-all flex items-center justify-center gap-2 focus-ring-accessible">{bookingSubmitting ? 'Đang tạo đơn...' : checkoutProduct === 'buddy' ? 'Gửi yêu cầu Local Buddy' : checkoutProduct === 'unlock' ? 'Tạo đơn & hiện QR 49.000đ' : 'Xác nhận & thanh toán'}</button>
+              <p className="text-[11px] text-[#2C221E]/60">{checkoutProduct === 'buddy' ? 'Chưa thu tiền ở bước gửi yêu cầu; QR chỉ được tạo sau khi TasteTrip xác nhận hướng dẫn viên và báo giá.' : checkoutProduct === 'unlock' ? 'Ngày 2 và các ngày còn lại chỉ mở sau khi TasteTrip xác nhận khoản chuyển 49.000đ.' : 'Tổng tiền là dự toán ăn uống theo lịch trình nhân với số khách; không gồm xe hoặc hướng dẫn viên.'}</p>
+            </form>
+            )}
+            {customerBooking && <section ref={bookingPaymentRef} tabIndex={-1} className="rounded-3xl border border-[#1E5631]/20 bg-[#FAF6EE] p-5 sm:p-7 space-y-5 focus:outline-none" aria-live="polite">
+              {bookingRecoveryNotice && !(customerBooking.tourTitle.startsWith('Yêu cầu Local Buddy: ') && customerBooking.status === 'confirmed') && <p role="status" className="rounded-xl bg-green-50 p-3 text-sm text-green-800">{bookingRecoveryNotice}</p>}
+              <div className="text-center">
+                <CheckCircle className="mx-auto h-12 w-12 text-[#1E5631]" />
+                <h3 className="mt-3 font-serif-playfair text-2xl font-bold text-[#8B0000]">{customerBooking.tourTitle.startsWith('Yêu cầu Local Buddy: ') ? 'Đã gửi yêu cầu Local Buddy' : 'Đơn tour đã được tạo'}</h3>
+                <p className="mt-1 text-sm text-[#2C221E]/70">Mã đơn: <strong className="text-[#8B0000]">{customerBooking.id}</strong></p>
               </div>
-            </div>
+              {customerBooking.quotedTotalVnd !== null ? <div className="flex items-center justify-between border-y border-[#D4B872]/30 py-3 text-sm"><span>{customerBooking.tourTitle.startsWith('Mở khóa lịch trình: ') ? 'Phí mở khóa' : `Tổng dự toán cho ${customerBooking.guests} khách`}</span><strong className="text-lg text-[#8B0000]">{customerBooking.quotedTotalVnd.toLocaleString('vi-VN')} đ</strong></div> : customerBooking.tourTitle.startsWith('Yêu cầu Local Buddy: ') && <p className="rounded-xl border-y border-[#D4B872]/30 py-3 text-sm">TasteTrip sẽ xác nhận người dẫn và báo giá trước khi gửi thông tin thanh toán.</p>}
+              {customerBooking.payment ? <div className="grid sm:grid-cols-[220px_1fr] gap-5 items-center rounded-2xl bg-white p-4">
+                <img src={customerBooking.payment.qrUrl} alt="QR chuyển khoản TasteTrip" className="w-full max-w-[220px] rounded-xl border border-gray-100" />
+                <div className="space-y-2 text-sm"><h4 className="font-bold text-[#1E5631]">Thông tin thanh toán</h4><p>Ngân hàng: <strong>{customerBooking.payment.bankId}</strong></p><p>Số tài khoản: <strong>{customerBooking.payment.accountNo}</strong></p><p>Chủ tài khoản: <strong>{customerBooking.payment.accountName}</strong></p><p>Số tiền: <strong>{customerBooking.payment.amount.toLocaleString('vi-VN')} đ</strong></p><p>Nội dung: <strong className="break-all">{customerBooking.payment.reference}</strong></p><p className="text-xs text-amber-800">Trước khi xác nhận trên ứng dụng ngân hàng, hãy kiểm tra đúng số tiền và nội dung ở trên. Nếu QR không tự điền, nhập thủ công.</p></div>
+              </div> : <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Đơn đã được lưu nhưng QR chưa khả dụng. Vui lòng liên hệ TasteTrip để hoàn tất thanh toán.</p>}
+              <p className="text-xs leading-relaxed text-[#2C221E]/65">Số tiền được tính từ dự toán ăn uống trong lịch trình nhân với số khách; chưa gồm xe và hướng dẫn viên. Đơn sẽ được TasteTrip xác nhận thanh toán sau khi đối soát.</p>
+              {customerBooking.paymentStatus === 'not_paid' && customerBooking.payment && <button type="button" onClick={handleCustomerPaymentReport} disabled={paymentLookupLoading} className="w-full rounded-2xl bg-[#1E5631] px-5 py-4 font-sans-poppins text-sm font-bold text-white disabled:opacity-60">{paymentLookupLoading ? 'Đang gửi yêu cầu...' : 'Yêu cầu đối soát thanh toán'}</button>}
+              {customerBooking.paymentStatus === 'awaiting_payment' && <p role="status" className="rounded-xl bg-green-50 p-3 text-sm text-green-800">TasteTrip đang đối soát giao dịch. Khi xác nhận đúng số tiền và nội dung, lịch trình sẽ tự mở tại đây.</p>}
+              {customerBooking.paymentStatus === 'paid' && <p role="status" className="rounded-xl bg-green-50 p-3 text-sm text-green-800">TasteTrip đã xác nhận thanh toán.</p>}
+            </section>}
           </div>
         )}
-
-        {/* FINISH */}
-        {step === 'finish' && (
-          <div className="max-w-md mx-auto bg-white p-12 rounded-[40px] shadow-2xl border border-[#D4B872]/20 text-center space-y-6 animate-motion-fadeIn my-20">
-            <div className="w-20 h-20 bg-[#1E5631]/15 text-[#1E5631] rounded-full flex items-center justify-center mx-auto shadow border border-[#1E5631]/30">
-              <CheckCircle className="w-10 h-10" />
-            </div>
-            <h2 className="font-serif-playfair text-3xl font-bold text-[#8B0000]">Kết Thúc Trải Nghiệm!</h2>
-            <p className="font-serif-lora text-xs text-[#2C221E]/80 leading-relaxed italic">
-              "Trọn vị non sông – Thấm tình đất Việt." Cảm ơn bạn đã đồng hành cùng TasteTrip trên hành trình thưởng ngoạn di sản ẩm thực. Hẹn gặp lại trong những chuyến du ngoạn đượm nồng hương sắc tiếp theo!
-            </p>
-            <button onClick={() => changeStep('start')} className="w-full bg-[#8B0000] hover:bg-[#A52A2A] text-white py-4 rounded-2xl font-sans-poppins font-bold text-sm shadow transition-all focus-ring-accessible">
-              Về Trang Chủ Ban Đầu
-            </button>
-          </div>
-        )}
+        {/* BOOKING CONFIRMATION */}
 
       </main>
 
@@ -2458,40 +3305,40 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
       {!isChatPopupOpen ? (
         <button
           onClick={() => setIsChatPopupOpen(true)}
-          className="fixed bottom-6 right-6 z-[160] flex items-center gap-3 bg-gradient-to-r from-[#1E5631] to-[#2E8B57] hover:from-[#164324] hover:to-[#1E5631] text-white px-5 py-3.5 rounded-full shadow-2xl border-2 border-[#D4B872]/60 hover:scale-105 active:scale-95 transition-all duration-300 group focus-ring-accessible cursor-pointer"
+          className="fixed bottom-6 right-6 z-[160] flex items-center gap-3 bg-[#1C4329] hover:bg-[#285E3A] text-white px-5 py-3 rounded-full shadow-editorial-lg border-2 border-[#C59B4B]/60 hover:scale-105 active:scale-95 transition-all duration-300 group focus-ring-accessible cursor-pointer"
           title="Trò chuyện cùng Trợ lý AI TasteTrip"
           aria-label="Mở chatbox Trợ lý AI"
         >
           <div className="relative">
-            <div className="w-10 h-10 rounded-full bg-[#FAF6EE] text-[#1E5631] flex items-center justify-center shadow-inner group-hover:rotate-12 transition-transform">
-              <Bot className="w-6 h-6" />
+            <div className="w-9 h-9 rounded-full bg-[#FAF7F2] text-[#1C4329] flex items-center justify-center shadow-inner group-hover:rotate-12 transition-transform">
+              <Bot className="w-5 h-5" />
             </div>
-            <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald-400 border-2 border-white rounded-full animate-pulse"></span>
+            <span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-emerald-400 border-2 border-white rounded-full animate-pulse"></span>
           </div>
           <div className="text-left hidden sm:block pr-1">
-            <div className="text-[11px] uppercase tracking-wider font-bold text-[#D4B872]">Trợ Lý AI</div>
-            <div className="text-xs font-semibold leading-tight text-white font-serif-lora">Hỏi đáp món ngon & du lịch</div>
+            <div className="text-[11px] uppercase tracking-wider font-bold text-[#E0BA6A]">Trợ Lý AI</div>
+            <div className="text-xs font-semibold leading-tight text-white font-sans">Hỏi đáp ẩm thực 24/7</div>
           </div>
         </button>
       ) : (
-        <div className="fixed bottom-6 right-6 z-[160] w-[92vw] sm:w-[400px] h-[560px] max-h-[85vh] bg-white rounded-3xl shadow-2xl border border-[#D4B872]/40 flex flex-col overflow-hidden animate-motion-fadeIn">
+        <div className="fixed bottom-6 right-6 z-[160] w-[92vw] sm:w-[410px] h-[570px] max-h-[85vh] bg-white rounded-[28px] shadow-editorial-lg border border-[#C59B4B]/35 flex flex-col overflow-hidden animate-motion-floatIn">
           {/* POPUP HEADER */}
-          <div className="bg-gradient-to-r from-[#1E5631] to-[#2E8B57] text-white p-4 flex items-center justify-between border-b border-[#D4B872]/30 shadow-sm">
+          <div className="bg-[#1C4329] text-white p-4 flex items-center justify-between border-b border-[#C59B4B]/25 shadow-sm">
             <div className="flex items-center gap-3">
               <div className="relative">
-                <div className="w-9 h-9 rounded-full bg-[#FAF6EE] text-[#1E5631] flex items-center justify-center shadow-inner">
+                <div className="w-9 h-9 rounded-full bg-[#FAF7F2] text-[#1C4329] flex items-center justify-center shadow-inner">
                   <Bot className="w-5 h-5" />
                 </div>
                 <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-400 border-2 border-white rounded-full"></span>
               </div>
               <div>
                 <h3 className="font-serif-playfair font-bold text-sm tracking-wide flex items-center gap-1.5 text-white">
-                  Trợ Lý AI TasteTrip
-                  <Sparkles className="w-3.5 h-3.5 text-[#D4B872]" />
+                  Trợ Lý Ẩm Thực TasteTrip
+                  <Sparkles className="w-3.5 h-3.5 text-[#E0BA6A]" />
                 </h3>
-                <p className="text-[10px] text-[#FAF6EE]/80 flex items-center gap-1">
+                <p className="text-[10px] text-white/80 flex items-center gap-1 font-sans">
                   <span className="inline-block w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
-                  Trực tuyến • Tư vấn 24/7
+                  Trực tuyến • Tư vấn du lịch ẩm thực
                 </p>
               </div>
             </div>
@@ -2505,17 +3352,18 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
           </div>
 
           {/* QUICK PROMPT SUGGESTIONS */}
-          <div className="px-3 py-2 bg-[#FAF6EE] border-b border-[#D4B872]/20 flex gap-2 overflow-x-auto no-scrollbar">
+          <div className="px-3.5 py-2.5 bg-[#FAF7F2] border-b border-[#C59B4B]/20 flex gap-2 overflow-x-auto no-scrollbar">
             {[
               'Phở ngon nhất ở Hà Nội?',
               'Đặc sản miền Trung nên thử?',
-              'Gợi ý ăn sáng Sài Gòn'
+              'Gợi ý ăn sáng Sài Gòn',
+              'Ăn gì ở Đà Lạt?'
             ].map((hint, idx) => (
               <button
                 key={idx}
                 type="button"
                 onClick={() => setChatInput(hint)}
-                className="whitespace-nowrap text-[10px] font-serif-lora px-2.5 py-1 rounded-full bg-white border border-[#D4B872]/40 text-[#2C221E]/80 hover:bg-[#1E5631] hover:text-white hover:border-[#1E5631] transition-all cursor-pointer"
+                className="whitespace-nowrap text-[11px] font-sans px-3 py-1 rounded-full bg-white border border-[#C59B4B]/30 text-[#2C221E]/80 hover:bg-[#8B1E1E] hover:text-white hover:border-[#8B1E1E] transition-all cursor-pointer shadow-xs"
               >
                 💡 {hint}
               </button>
@@ -2523,20 +3371,20 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
           </div>
 
           {/* MESSAGES LIST */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#FAF6EE]/40">
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#FAF7F2]/50">
             {chatMessages.map((msg, idx) => (
               <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div
-                  className={`max-w-[85%] p-3.5 rounded-2xl text-xs font-serif-lora leading-relaxed shadow-sm ${
+                  className={`max-w-[85%] p-3.5 rounded-2xl text-xs font-sans leading-relaxed shadow-editorial ${
                     msg.role === 'user'
-                      ? 'bg-[#1E5631] text-white rounded-br-none'
-                      : 'bg-white text-[#2C221E] border border-[#D4B872]/30 rounded-bl-none shadow-sm'
+                      ? 'bg-[#8B1E1E] text-white rounded-br-xs'
+                      : 'bg-white text-[#2C221E] border border-[#C59B4B]/30 rounded-bl-xs'
                   }`}
                 >
                   {formatChatLines(msg.text).map((line, lIdx) => {
                     if (!line.text) return <div key={lIdx} className="h-2" aria-hidden="true" />;
                     if (line.kind === 'heading') {
-                      return <div key={lIdx} className="font-bold text-sm mt-2 first:mt-0">{renderChatText(line.text)}</div>;
+                      return <div key={lIdx} className="font-bold text-sm mt-2 first:mt-0 font-serif-playfair">{renderChatText(line.text)}</div>;
                     }
                     if (line.kind === 'bullet') {
                       return <div key={lIdx} className="flex gap-1.5 pl-1"><span aria-hidden="true">•</span><span>{renderChatText(line.text)}</span></div>;
@@ -2546,35 +3394,39 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
                     }
                     return <div key={lIdx}>{renderChatText(line.text)}</div>;
                   })}
+                  {msg.partnerLinks && msg.partnerLinks.length > 0 && <div className="mt-3 flex flex-wrap gap-2 border-t border-[#C59B4B]/30 pt-3">
+                    {msg.partnerLinks.map((link) => <a key={`${link.partner}-${link.provinceId}`} href={link.url} target="_blank" rel="sponsored noopener noreferrer" onClick={() => { void logAffiliateClick(link.partner, link.provinceId, 'assistant_chat'); }} className="rounded-lg border border-[#1C4329]/20 bg-[#FAF7F2] px-3 py-1.5 text-[11px] font-bold text-[#1C4329] hover:bg-white transition-colors">Xem trên {link.partner} ↗</a>)}
+                  </div>}
                 </div>
               </div>
             ))}
             {chatLoading && (
               <div className="flex justify-start">
-                <div className="bg-white text-[#2C221E] p-3.5 rounded-2xl rounded-bl-none border border-[#D4B872]/30 text-xs flex items-center gap-1.5 shadow-sm">
-                  <div className="w-2 h-2 bg-[#1E5631] rounded-full animate-bounce"></div>
-                  <div className="w-2 h-2 bg-[#1E5631] rounded-full animate-bounce [animation-delay:0.2s]"></div>
-                  <div className="w-2 h-2 bg-[#1E5631] rounded-full animate-bounce [animation-delay:0.4s]"></div>
-                  <span className="text-[11px] text-[#2C221E]/60 ml-1 font-serif-lora italic">AI đang trả lời...</span>
+                <div className="bg-white text-[#2C221E] p-3.5 rounded-2xl rounded-bl-xs border border-[#C59B4B]/30 text-xs flex items-center gap-2 shadow-editorial">
+                  <div className="w-2 h-2 bg-[#8B1E1E] rounded-full animate-bounce"></div>
+                  <div className="w-2 h-2 bg-[#8B1E1E] rounded-full animate-bounce [animation-delay:0.2s]"></div>
+                  <div className="w-2 h-2 bg-[#8B1E1E] rounded-full animate-bounce [animation-delay:0.4s]"></div>
+                  <span className="text-[11px] text-[#2C221E]/65 ml-1 font-sans italic">AI đang chắt lọc gợi ý ẩm thực...</span>
                 </div>
               </div>
             )}
           </div>
 
           {/* INPUT FORM */}
-          <form onSubmit={handleSendChatMessage} className="p-3 bg-white border-t border-[#D4B872]/20 flex gap-2 items-center">
+          <form onSubmit={handleSendChatMessage} className="p-3 bg-white border-t border-[#C59B4B]/20 flex gap-2 items-center">
             <input
               type="text"
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               placeholder="Hỏi món ngon, quán ăn, văn hóa..."
-              className="flex-1 px-4 py-2.5 bg-[#FAF6EE] border border-[#D4B872]/30 rounded-xl font-serif-lora text-xs text-[#2C221E] focus:outline-none focus:border-[#1E5631] transition-colors"
+              className="flex-1 px-4 py-2.5 bg-[#FAF7F2] border border-[#C59B4B]/30 rounded-xl font-sans text-xs text-[#2C221E] focus:outline-none focus:border-[#8B1E1E] transition-colors"
             />
             <button
               type="submit"
               disabled={chatLoading || !chatInput.trim()}
-              className="bg-[#1E5631] hover:bg-[#2E8B57] disabled:bg-gray-300 disabled:cursor-not-allowed text-white p-2.5 rounded-xl transition-all shadow focus-ring-accessible flex items-center justify-center cursor-pointer"
+              className="bg-[#8B1E1E] hover:bg-[#6D1414] disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed text-white p-2.5 rounded-xl transition-all shadow-editorial focus-ring-accessible flex items-center justify-center cursor-pointer"
               title="Gửi tin nhắn"
+              aria-label="Gửi tin nhắn"
             >
               <Send className="w-4 h-4" />
             </button>

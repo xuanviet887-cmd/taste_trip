@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Backend proxy for tourist-platform integrating Google Gemini API",
   "main": "index.js",
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "type": "module",
   "scripts": {
     "start": "node index.js",

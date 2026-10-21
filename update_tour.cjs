@@ -1,0 +1,210 @@
+const fs = require('fs');
+const path = require('path');
+
+const file = path.join(__dirname, 'src/App.tsx');
+let content = fs.readFileSync(file, 'utf8');
+
+const startMarker = 'function buildCustomTourStops(';
+const endMarker = 'export default function App() {';
+
+const startIndex = content.indexOf(startMarker);
+const endIndex = content.indexOf(endMarker);
+
+if (startIndex === -1 || endIndex === -1) {
+  console.error('Markers not found', { startIndex, endIndex });
+  process.exit(1);
+}
+
+const replacement = `function normalizeLocationString(str: string): string {
+  return (str || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\\u0300-\\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/[^a-z0-9]/g, ' ')
+    .replace(/\\s+/g, ' ')
+    .trim();
+}
+
+const LOCATION_ALIASES: Record<string, string> = {
+  // Miền Bắc
+  'ha noi': 'hanoi', 'pho co': 'hanoi', 'hoan kiem': 'hanoi', 'ba dinh': 'hanoi', 'tay ho': 'hanoi',
+  'hai phong': 'haiphong', 'cat ba': 'haiphong', 'do son': 'haiphong',
+  'ha nam': 'hanam', 'phu ly': 'hanam', 'vu dai': 'hanam',
+  'hai duong': 'haiduong', 'hung yen': 'hungyen', 'pho hien': 'hungyen',
+  'nam dinh': 'namdinh',
+  'ninh binh': 'ninhbinh', 'trang an': 'ninhbinh', 'tam coc': 'ninhbinh', 'bai dinh': 'ninhbinh',
+  'thai binh': 'thaibinh', 'vinh phuc': 'vinhphuc', 'tam dao': 'vinhphuc',
+  'bac ninh': 'bacninh', 'kinh bac': 'bacninh', 'tu son': 'bacninh',
+  'bac giang': 'bacgiang', 'yen the': 'bacgiang',
+  'bac kan': 'backan', 'ba be': 'backan',
+  'cao bang': 'caobang', 'ban gioc': 'caobang',
+  'ha giang': 'hagiang', 'dong van': 'hagiang', 'meo vac': 'hagiang', 'lung cu': 'hagiang',
+  'lang son': 'langson', 'phu tho': 'phutho', 'den hung': 'phutho', 'viet tri': 'phutho',
+  'quang ninh': 'quangninh', 'ha long': 'quangninh', 'bai chay': 'quangninh', 'van don': 'quangninh', 'co to': 'quangninh',
+  'thai nguyen': 'thainguyen', 'tuyen quang': 'tuyenquang',
+  'dien bien': 'dienbien', 'hoa binh': 'hoabinh', 'lai chau': 'laichau',
+  'lao cai': 'laocai', 'sa pa': 'laocai', 'sapa': 'laocai', 'fansipan': 'laocai',
+  'son la': 'sonla', 'moc chau': 'sonla', 'yen bai': 'yenbai', 'mu cang chai': 'yenbai',
+
+  // Miền Trung & Tây Nguyên
+  'thanh hoa': 'thanhhoa', 'sam son': 'thanhhoa',
+  'nghe an': 'nghean', 'cua lo': 'nghean', 'vinh': 'nghean',
+  'ha tinh': 'hatinh',
+  'quang binh': 'quangbinh', 'phong nha': 'quangbinh', 'dong hoi': 'quangbinh',
+  'quang tri': 'quangtri',
+  'thua thien hue': 'thuathienhue', 'hue': 'thuathienhue', 'co do': 'thuathienhue', 'dai noi': 'thuathienhue',
+  'da nang': 'danang', 'ba na': 'danang', 'my khe': 'danang', 'son tra': 'danang', 'hai chau': 'danang',
+  'quang nam': 'quangnam', 'hoi an': 'quangnam', 'my son': 'quangnam',
+  'quang ngai': 'quangngai', 'ly son': 'quangngai',
+  'binh dinh': 'binhdinh', 'quy nhon': 'binhdinh', 'ky co': 'binhdinh', 'eo gio': 'binhdinh',
+  'phu yen': 'phuyen', 'tuy hoa': 'phuyen', 'ganh da dia': 'phuyen',
+  'khanh hoa': 'khanhhoa', 'nha trang': 'khanhhoa', 'cam ranh': 'khanhhoa', 'ninh hoa': 'khanhhoa',
+  'ninh thuan': 'ninhthuan', 'phan rang': 'ninhthuan',
+  'binh thuan': 'binhthuan', 'phan thiet': 'binhthuan', 'mui ne': 'binhthuan',
+  'dak lak': 'daklak', 'buon ma thuot': 'daklak', 'bmt': 'daklak',
+  'dak nong': 'daknong', 'gia lai': 'gialai', 'pleiku': 'gialai',
+  'kon tum': 'kontum', 'mang den': 'kontum',
+  'lam dong': 'lamdong', 'da lat': 'lamdong', 'dalat': 'lamdong', 'bao loc': 'lamdong',
+
+  // Miền Nam & Miền Tây
+  'ba ria vung tau': 'bariavungtau', 'vung tau': 'bariavungtau', 'con dao': 'bariavungtau',
+  'binh duong': 'binhduong', 'thu dau mot': 'binhduong',
+  'binh phuoc': 'binhphuoc', 'dong nai': 'dongnai', 'bien hoa': 'dongnai',
+  'tp ho chi minh': 'tphochiminh', 'sai gon': 'tphochiminh', 'saigon': 'tphochiminh', 'hcm': 'tphochiminh', 'quan 1': 'tphochiminh', 'quan 3': 'tphochiminh', 'cho lon': 'tphochiminh',
+  'tay ninh': 'tayninh', 'ba den': 'tayninh',
+  'an giang': 'angiang', 'long xuyen': 'angiang', 'chau doc': 'angiang',
+  'bac lieu': 'baclieu', 'ben tre': 'bentre', 'ca mau': 'camau', 'dat mui': 'camau',
+  'can tho': 'cantho', 'ninh kieu': 'cantho', 'cai rang': 'cantho', 'tay do': 'cantho',
+  'dong thap': 'dongthap', 'sa dec': 'dongthap', 'cao lanh': 'dongthap',
+  'hau giang': 'haugiang', 'vi thanh': 'haugiang',
+  'kien giang': 'kiengiang', 'phu quoc': 'kiengiang', 'ha tien': 'kiengiang', 'rach gia': 'kiengiang',
+  'long an': 'longan', 'tan an': 'longan',
+  'soc trang': 'soctrang', 'tien giang': 'tiengiang', 'my tho': 'tiengiang',
+  'tra vinh': 'travinh', 'vinh long': 'vinhlong',
+};
+
+function buildCustomTourStops(
+  location: string,
+  need: string,
+  timeOption: string,
+  timeManual: string,
+  budgetVal: number,
+  hobby: string,
+  radius: number
+): { stops: StopItem[]; totalDistance: string; totalCost: string; status: string } {
+  const normLoc = normalizeLocationString(location);
+
+  // 1. Tra cứu theo từ điển định danh địa phương (aliases)
+  let matchedTourId = '';
+  for (const [alias, tourId] of Object.entries(LOCATION_ALIASES)) {
+    if (normLoc.includes(alias)) {
+      matchedTourId = tourId;
+      break;
+    }
+  }
+
+  // 2. Tra cứu trực tiếp trong kho 63 Tỉnh Thành
+  let matchedTour = matchedTourId ? THEMED_TOURS.find(t => t.id === matchedTourId) : undefined;
+  if (!matchedTour && normLoc) {
+    matchedTour = THEMED_TOURS.find(t => {
+      const normTitle = normalizeLocationString(t.title);
+      const titleMain = normalizeLocationString(t.title.split('-')[0]);
+      return normLoc.includes(t.id) || normLoc.includes(titleMain) || normTitle.includes(normLoc) || (normLoc.length >= 3 && titleMain.includes(normLoc));
+    });
+  }
+
+  // 3. Fallback sang Hà Nội nếu không khớp tỉnh nào
+  if (!matchedTour) {
+    matchedTour = THEMED_TOURS[0];
+  }
+
+  // 4. Lọc số điểm dừng và khung giờ theo lựa chọn thời gian thực tế
+  const timeText = (timeManual.trim() || timeOption).toLowerCase();
+  const isMorningOnly = timeText.includes('sáng') && !timeText.includes('chiều') && !timeText.includes('tối') && !timeText.includes('cả ngày');
+  const isAfternoonEvening = (timeText.includes('chiều') || timeText.includes('tối')) && !timeText.includes('sáng') && !timeText.includes('cả ngày');
+
+  let baseStops: StopItem[] = [];
+  if (isMorningOnly) {
+    // 2 điểm: Bữa sáng truyền thống + Cà phê / Ăn vặt sáng
+    baseStops = [
+      { ...matchedTour.stops[0], time: '07:30', mealType: 'Ăn sáng' },
+      { ...(matchedTour.stops[2] || matchedTour.stops[1]), time: '09:30', mealType: 'Cà phê & Quà sáng' },
+    ];
+  } else if (isAfternoonEvening) {
+    // 3 điểm: Ăn xế chiều + Bữa tối đặc sản + Khám phá ẩm thực đêm
+    baseStops = [
+      { ...(matchedTour.stops[2] || matchedTour.stops[1]), time: '15:30', mealType: 'Ăn xế chiều' },
+      { ...(matchedTour.stops[3] || matchedTour.stops[0]), time: '18:30', mealType: 'Bữa tối đặc sản' },
+      { ...(matchedTour.stops[1] || matchedTour.stops[2]), time: '20:30', mealType: 'Khám phá ẩm thực đêm' },
+    ];
+  } else {
+    // 4 điểm trọn ngày: Sáng - Trưa - Chiều - Tối
+    const defaultTimes = ['08:00', '12:00', '15:30', '19:00'];
+    const defaultMeals = ['Ăn sáng', 'Ăn trưa', 'Ăn xế chiều', 'Bữa tối đặc sản'];
+    baseStops = matchedTour.stops.map((s, idx) => ({
+      ...s,
+      time: defaultTimes[idx] || s.time,
+      mealType: defaultMeals[idx] || s.mealType,
+    }));
+  }
+
+  // 5. Phân bổ ngân sách thông minh (budgetVal) chuẩn từng bữa ăn
+  const tier = getBudgetTier(budgetVal);
+  const numStops = baseStops.length;
+  let budgetRatios = [0.18, 0.36, 0.16, 0.30];
+  if (numStops === 2) budgetRatios = [0.45, 0.55];
+  else if (numStops === 3) budgetRatios = [0.20, 0.55, 0.25];
+
+  let totalCalculatedCost = 0;
+  const stopsWithBudget = baseStops.map((stop, idx) => {
+    const targetPrice = Math.max(25000, Math.round((budgetVal * (budgetRatios[idx] || (1 / numStops))) / 5000) * 5000);
+    totalCalculatedCost += targetPrice;
+    return {
+      ...stop,
+      price: `${targetPrice.toLocaleString('vi-VN')}đ`,
+      priceNum: targetPrice,
+      category: `${tier} • ${stop.category || 'Đặc sản di sản'}`,
+    };
+  });
+
+  // 6. Tối ưu lộ trình di chuyển (TSP Nearest-Neighbor) trong bán kính radius
+  const maxSafeDist = Math.max(0.6, Math.min(radius * 0.85, (numStops - 1) * 1.5));
+  const stepDist = Number((maxSafeDist / Math.max(1, numStops - 1)).toFixed(1));
+
+  let currentDist = 0;
+  const departurePoint = location.trim() || matchedTour.title.split('-')[0].trim();
+  const finalStops: StopItem[] = stopsWithBudget.map((stop, idx) => {
+    let distStr = '';
+    if (idx === 0) {
+      distStr = `0.0 km (Khởi hành: ${departurePoint})`;
+    } else {
+      currentDist = Number((currentDist + stepDist).toFixed(1));
+      distStr = `${stepDist} km từ điểm trước`;
+    }
+
+    let customTastingTip = stop.tastingTip || 'Thưởng thức khi còn nóng hổi cùng các gia vị chuẩn vị bản địa.';
+    if (hobby && hobby.trim()) {
+      customTastingTip = `${customTastingTip} [Gợi ý cho sở thích "${hobby}": có thể nhờ quán gia giảm gia vị theo đúng sở thích của bạn].`;
+    }
+
+    return {
+      ...stop,
+      distance: distStr,
+      tastingTip: customTastingTip,
+    };
+  });
+
+  const finalDistStr = `${currentDist} km`;
+  const finalCostStr = `${totalCalculatedCost.toLocaleString('vi-VN')}đ`;
+  const status = `Lộ trình tối ưu ${finalStops.length} chặng cho "${need || 'Khám phá ẩm thực'}" tại ${matchedTour.title.split('-')[0].trim()} (Bán kính ${finalDistStr} / Tối đa ${radius} km, Ngân sách ${finalCostStr})`;
+
+  return { stops: finalStops, totalDistance: finalDistStr, totalCost: finalCostStr, status };
+}
+
+`;
+
+content = content.slice(0, startIndex) + replacement + content.slice(endIndex);
+fs.writeFileSync(file, content, 'utf8');
+console.log('Successfully updated buildCustomTourStops!');
+
