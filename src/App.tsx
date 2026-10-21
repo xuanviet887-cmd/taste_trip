@@ -2704,7 +2704,7 @@ Hãy trả về lịch trình các điểm dừng ăn uống với tên quán th
           <div className="space-y-12 max-w-7xl mx-auto py-12 animate-motion-fadeIn">
             <div className="flex flex-col md:flex-row items-center justify-between bg-white p-8 rounded-[35px] border border-[#D4B872]/30 shadow-sm gap-4">
                 <div className="min-w-0 flex-1">
-                <button onClick={() => changeStep('themed-tour')} className="text-[10px] font-black font-sans-montserrat uppercase tracking-widest text-[#8B0000] hover:underline flex items-center gap-1 mb-2"><ArrowLeft className="w-4 h-4" /> Quay lại</button>
+                <button onClick={() => changeStep(activeTour.id === 'custom-tour-result' || activeTour.id.startsWith('ai-') || Boolean(activeTour.savedId?.startsWith('ai-')) ? 'custom-tour' : 'themed-tour')} className="text-[10px] font-black font-sans-montserrat uppercase tracking-widest text-[#8B0000] hover:underline flex items-center gap-1 mb-2"><ArrowLeft className="w-4 h-4" /> Quay lại</button>
                 <h2 className="font-serif-playfair text-4xl font-black text-[#8B0000]">{activeTour.title}</h2>
                 <p className="font-serif-lora text-xs text-[#2C221E]/70 italic mt-1">{activeTour.desc}</p>
               </div>
